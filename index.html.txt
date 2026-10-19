@@ -1,0 +1,2081 @@
+// ═══════════════════════════════════════════════════════════════════
+//  DRGL FIELD OPERATIONS PORTAL — Google Apps Script Backend
+//  Uses google.script.run (no fetch, no CORS, no API URL needed)
+//
+//  DEPLOY:
+//  1. Paste into Code.gs (replace everything)
+//  2. Deploy → New deployment → Web app
+//     Execute as: Me  |  Who has access: Anyone
+// ═══════════════════════════════════════════════════════════════════
+
+var SHEET_ID = '19xBtJjD2wLMelU0KPUCiJdB-QEU2rRQtxMBkKMfA4Kw';
+
+// Predefined responsibility disciplines — also sent to the frontend via getConfig()
+var RESPONSIBILITIES = [
+  'Geology', 'Drilling', 'Geochemistry', 'Geophysics', 'Geoinformatics',
+  'R&D', 'Training', 'Hydro', 'Geotechnical', 'Environmental',
+  'Licensing & Compliance', 'Media & Marketing'
+];
+
+var SN = {
+  USERS:         'Users',
+  REPORTS:       'DailyReports',
+  COMPLAINTS:    'Complaints',
+  FINANCE:       'FinanceRequests',
+  SITES:         'Sites',
+  DEPTLOGS:      'DeptLogs',
+  DEPARTMENTS:   'Departments',
+  ASSIGNMENTS:   'Assignments',
+  ASGCOMMENTS:   'AssignmentComments',
+  FIELDDATA:     'FieldData',
+  UPLOADS:       'Uploads',
+  PROJECTS:      'Projects',
+  CDTASKS:       'CrossDeptTasks',
+  // Field-to-Report Pipeline
+  FGEO:    'FieldGeology',       // Geology field observations
+  FGPHY:   'FieldGeophysics',    // Geophysics field records
+  FGCHEM:  'FieldGeochem',       // Geochemistry field records
+  FDRILL:  'FieldDrilling',      // Drilling field records
+  DREQS:   'DataRequests',       // HQ → field data requests
+  POUTS:   'ProcessedOutputs'    // Processed maps/reports uploaded by office
+};
+
+var HDR = {
+  Users:           ['username','password','role','name','title','site','token','department',
+                    'leadDepts','supportDepts'],
+  DailyReports:    ['id','site','author','authorName','date','type','activity',
+                    'weather','progress','crew','issues','timestamp'],
+  Complaints:      ['id','site','author','authorName','date','category','priority',
+                    'subject','detail','status','resolvedBy','resolvedAt','timestamp'],
+  FinanceRequests: ['id','site','author','authorName','date','category','amount',
+                    'urgency','description','status','approvedBy','approvedAt','timestamp'],
+  Sites:           ['id','name','state','minerals','active','lead'],
+  DeptLogs:        ['id','department','site','author','authorName','date','title',
+                    'description','status','attachmentNote','timestamp',
+                    'project','workflowStage'],
+  Departments:     ['id','name','icon','description','active','createdBy','timestamp','lead'],
+  Assignments:     ['id','department','project','title','description','assignedTo',
+                    'assignedToName','priority','dueDate','progress','status',
+                    'major1','major2','support1','support2',
+                    'createdBy','createdByName','timestamp'],
+  AssignmentComments: ['id','assignmentId','author','authorName','message','timestamp'],
+  FieldData:  ['id','dept','site','recordType','title','description',
+               'gpsLat','gpsLon','elevation','sampleId','formation',
+               'fileUrls','tags','uploadedBy','uploadedByName','timestamp','active'],
+  Uploads:    ['id','context','contextId','dept','site','fileName','mimeType',
+               'driveFileId','driveViewUrl','size','uploadedBy','uploadedByName','timestamp','active'],
+  // Cross-organisation project (spans multiple departments / sites)
+  Projects:   ['id','name','licenceNo','site','minerals','status','leadDept',
+               'description','createdBy','createdByName','timestamp','active'],
+  // Cross-department task: one dept notifies another to take action
+  CrossDeptTasks: ['id','projectId','projectName','fromDept','toDept','title',
+                   'description','priority','status','sourceDeptLogId',
+                   'createdBy','createdByName','timestamp','resolvedBy','resolvedAt','active'],
+
+  // ── Field-to-Report Pipeline ────────────────────────────────────
+  // Geology field observations (Right-Hand Rule)
+  FieldGeology: ['id','projectId','projectName','site','date','submittedBy','submittedByName',
+                 'gpsLat','gpsLon','elevation',
+                 'formation','rockUnit','lithology','colour','texture','grain',
+                 'structure','structureType',        // fold/fault/joint/vein/bedding
+                 'strikeRHR',                        // RHR strike (bearing of right-hand direction)
+                 'dip','dipDirection',               // dip angle + quadrant e.g. NW
+                 'alteration','mineralisationType','mineralisationIntensity',
+                 'sampleIds',                        // comma-sep sample numbers
+                 'assayNotes','remarks',
+                 'photoUrls','sketchUrl',
+                 'status','timestamp','active'],
+
+  // Geophysics field records
+  FieldGeophysics: ['id','projectId','projectName','site','date','submittedBy','submittedByName',
+                    'gpsLat','gpsLon','elevation',
+                    'surveyMethod',                  // magnetics/IP/resistivity/EM/seismic
+                    'instrument','serialNo',
+                    'lineNumber','stationNumber','stationSpacing',
+                    'readingValue','readingUnit',
+                    'anomalyDescription','qualityFlag',
+                    'calibrationNote',
+                    'rawDataFileUrl',
+                    'remarks','photoUrls',
+                    'status','timestamp','active'],
+
+  // Geochemistry field records
+  FieldGeochem: ['id','projectId','projectName','site','date','submittedBy','submittedByName',
+                 'gpsLat','gpsLon','elevation',
+                 'sampleId','sampleType',            // soil/rock/stream-sed/float/channel
+                 'horizon','depthCm',
+                 'fieldObservation','colour','texture',
+                 'bagWeight','chainOfCustody',
+                 'labRef','labSubmittedDate',
+                 'photoUrls','remarks',
+                 'status','timestamp','active'],
+
+  // Drilling field records
+  FieldDrilling: ['id','projectId','projectName','site','date','submittedBy','submittedByName',
+                  'holeId','collarLat','collarLon','collarElevation',
+                  'holeDiameter','drillingMethod',   // RC/diamond/percussion/auger
+                  'depthFrom','depthTo',             // interval
+                  'rockType','formation',
+                  'rqd',                             // Rock Quality Designation %
+                  'recovery',                        // core recovery %
+                  'mineralisation','alterationType',
+                  'coreCondition',                   // solid/broken/cavity
+                  'waterStrike','waterDepth',
+                  'corePhotoUrl','remarks',
+                  'status','timestamp','active'],
+
+  // HQ data requests → field crew
+  DataRequests: ['id','projectId','projectName','site','requestedDept',
+                 'title','description','dataType',   // geology/geophysics/geochem/drilling
+                 'urgency',                          // normal/urgent/critical
+                 'requestedBy','requestedByName',
+                 'dueDate','status',                 // open/fulfilled/cancelled
+                 'fulfilledBy','fulfilledAt','fulfilledRecordId',
+                 'timestamp','active'],
+
+  // Processed outputs (maps, reports) uploaded by office
+  ProcessedOutputs: ['id','projectId','projectName','site','dept',
+                     'outputType',                   // map/report/shapefile/model/other
+                     'title','description',
+                     'version','versionTag',         // draft/final
+                     'fileUrl','driveFileId','fileName','mimeType','fileSize',
+                     'producedBy','producedByName',
+                     'isFinalReport',                // true/false
+                     'timestamp','active']
+};
+
+// ───────────────────────────────────────────────────────────────────
+//  SERVE THE HTML PAGE
+// ───────────────────────────────────────────────────────────────────
+function doGet() {
+  // NOTE: setupSheets() and migrateRoles() are intentionally NOT called here.
+  // Both involve sheet writes that can push doGet() past 30 seconds.
+  // Run setupSheets() once manually from the Apps Script editor (Run → setupSheets).
+  return HtmlService.createHtmlOutputFromFile('Index')
+    .setTitle('DRGL Field Ops Portal')
+    .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
+}
+
+// ───────────────────────────────────────────────────────────────────
+//  SHEET HELPERS
+// ───────────────────────────────────────────────────────────────────
+function getSheet(name) {
+  var ss = SpreadsheetApp.openById(SHEET_ID);
+  var sh = ss.getSheetByName(name);
+  if (!sh) { setupSheets(); sh = ss.getSheetByName(name); }
+  if (!sh) throw new Error('Sheet not found: ' + name);
+  return sh;
+}
+
+/**
+ * sheetRows — safe version.
+ * Returns [] if the sheet doesn't exist yet (avoids triggering a full
+ * setupSheets() during reads, which can timeout and crash the caller).
+ * Accepts an optional pre-opened Spreadsheet object to avoid repeated openById() calls.
+ */
+function sheetRows(name, ssObj) {
+  try {
+    var ss = ssObj || SpreadsheetApp.openById(SHEET_ID);
+    var sh = ss.getSheetByName(name);
+    if (!sh) return [];                          // sheet not yet created — treat as empty
+    var data = sh.getDataRange().getValues();
+    if (data.length < 2) return [];
+    var hdrs = data[0].map(function(h){ return String(h).trim(); });
+    return data.slice(1).map(function(row) {
+      var o = {};
+      hdrs.forEach(function(h, i){ o[h] = row[i] == null ? '' : row[i]; });
+      return o;
+    });
+  } catch(e) {
+    return [];   // any quota/permission error → empty result, never crash the caller
+  }
+}
+
+function appendRow(name, headers, obj) {
+  getSheet(name).appendRow(headers.map(function(h){ return obj[h] == null ? '' : obj[h]; }));
+}
+
+function findRow(name, col, val) {
+  var sh   = getSheet(name);
+  var data = sh.getDataRange().getValues();
+  var hdrs = data[0].map(function(h){ return String(h).trim(); });
+  var ci   = hdrs.indexOf(col);
+  if (ci < 0) throw new Error('Column not found: ' + col);
+  for (var i = 1; i < data.length; i++) {
+    if (String(data[i][ci]) === String(val)) return { sh: sh, row: i + 1, hdrs: hdrs };
+  }
+  return { sh: sh, row: -1, hdrs: hdrs };
+}
+
+function setCell(fr, col, val) {
+  var ci = fr.hdrs.indexOf(col);
+  if (ci >= 0) fr.sh.getRange(fr.row, ci + 1).setValue(val);
+}
+
+// Adds a header column to a sheet if it doesn't already exist (backwards-compat)
+function ensureCol(sheetName, colName) {
+  var sh = getSheet(sheetName);
+  var hdrs = sh.getRange(1, 1, 1, sh.getLastColumn()).getValues()[0];
+  if (hdrs.indexOf(colName) < 0) {
+    var newCol = sh.getLastColumn() + 1;
+    sh.getRange(1, newCol).setValue(colName);
+  }
+}
+
+function uid() { return String(Date.now()) + String(Math.floor(Math.random()*1000)); }
+
+// ───────────────────────────────────────────────────────────────────
+//  AUTO SETUP
+// ───────────────────────────────────────────────────────────────────
+function setupSheets() {
+  var ss = SpreadsheetApp.openById(SHEET_ID);
+
+  // Create any missing sheets with headers + seed data
+  Object.keys(SN).forEach(function(k) {
+    var name = SN[k];
+    if (!ss.getSheetByName(name)) {
+      var sh = ss.insertSheet(name);
+      var h  = HDR[name];
+      var r  = sh.getRange(1, 1, 1, h.length);
+      r.setValues([h]);
+      r.setFontWeight('bold').setBackground('#1a237e').setFontColor('#ffffff');
+      sh.setFrozenRows(1);
+      if (name === SN.USERS)       seedUsers(sh);
+      if (name === SN.SITES)       seedSites(sh);
+      if (name === SN.DEPARTMENTS) seedDepartments(sh);
+    }
+  });
+
+  // Ensure all columns exist on the Users sheet (backwards-compat for older deploys)
+  HDR.Users.forEach(function(col){ try { ensureCol(SN.USERS, col); } catch(_){} });
+  // Ensure all columns exist on DeptLogs sheet (including new project/workflowStage)
+  HDR.DeptLogs.forEach(function(col){ try { ensureCol(SN.DEPTLOGS, col); } catch(_){} });
+
+  // Seed departments if the sheet exists but is empty (happens when sheet was created before seed code existed)
+  try {
+    var dsh = ss.getSheetByName(SN.DEPARTMENTS);
+    if (dsh && dsh.getLastRow() <= 1) {
+      seedDepartments(dsh);
+    }
+  } catch(_) {}
+
+  // Top-up migration: add any missing departments from the full catalogue (handles existing deploys
+  // that were seeded with only the original 5 departments before the full 14-dept catalogue existed)
+  try {
+    var dsh2 = ss.getSheetByName(SN.DEPARTMENTS);
+    if (dsh2) {
+      var existingNames = sheetRows(SN.DEPARTMENTS).map(function(r){ return r.name; });
+      var now2 = Date.now();
+      ALL_DEPT_SEEDS.forEach(function(d) {
+        if (existingNames.indexOf(d[1]) === -1) {
+          dsh2.appendRow([d[0], d[1], d[2], d[3], 'true', 'system', now2]);
+        }
+      });
+    }
+  } catch(_) {}
+
+  // Ensure all columns exist on Assignments and AssignmentComments (backwards-compat)
+  HDR.Assignments.forEach(function(col){ try { ensureCol(SN.ASSIGNMENTS, col); } catch(_){} });
+  HDR.AssignmentComments.forEach(function(col){ try { ensureCol(SN.ASGCOMMENTS, col); } catch(_){} });
+  // Ensure Departments has the new 'lead' column
+  try { ensureCol(SN.DEPARTMENTS, 'lead'); } catch(_) {}
+  // Ensure Users has leadDepts + supportDepts columns
+  try { ensureCol(SN.USERS, 'leadDepts'); } catch(_) {}
+  try { ensureCol(SN.USERS, 'supportDepts'); } catch(_) {}
+  // Ensure Sites has the 'lead' column
+  try { ensureCol(SN.SITES, 'lead'); } catch(_) {}
+  // Ensure FieldData sheet exists
+  try {
+    var ss = SpreadsheetApp.openById(SHEET_ID);
+    if (!ss.getSheetByName(SN.FIELDDATA)) {
+      var fds = ss.insertSheet(SN.FIELDDATA);
+      fds.appendRow(HDR.FieldData);
+      fds.getRange(1,1,1,HDR.FieldData.length).setFontWeight('bold');
+    } else {
+      HDR.FieldData.forEach(function(col){ try { ensureCol(SN.FIELDDATA, col); } catch(_){} });
+    }
+  } catch(_) {}
+
+  // Ensure Uploads sheet exists
+  try {
+    var ss3 = SpreadsheetApp.openById(SHEET_ID);
+    if (!ss3.getSheetByName(SN.UPLOADS)) {
+      var ups = ss3.insertSheet(SN.UPLOADS);
+      var uh = HDR.Uploads;
+      ups.getRange(1,1,1,uh.length).setValues([uh]).setFontWeight('bold').setBackground('#1a237e').setFontColor('#ffffff');
+      ups.setFrozenRows(1);
+    } else {
+      HDR.Uploads.forEach(function(col){ try { ensureCol(SN.UPLOADS, col); } catch(_){} });
+    }
+  } catch(_) {}
+
+  // Ensure Projects sheet exists
+  try {
+    var ss4 = SpreadsheetApp.openById(SHEET_ID);
+    if (!ss4.getSheetByName(SN.PROJECTS)) {
+      var psh = ss4.insertSheet(SN.PROJECTS);
+      var ph  = HDR.Projects;
+      psh.getRange(1,1,1,ph.length).setValues([ph]).setFontWeight('bold').setBackground('#1a237e').setFontColor('#ffffff');
+      psh.setFrozenRows(1);
+    } else {
+      HDR.Projects.forEach(function(col){ try { ensureCol(SN.PROJECTS, col); } catch(_){} });
+    }
+  } catch(_) {}
+
+  // Ensure CrossDeptTasks sheet exists
+  try {
+    var ss5 = SpreadsheetApp.openById(SHEET_ID);
+    if (!ss5.getSheetByName(SN.CDTASKS)) {
+      var csh = ss5.insertSheet(SN.CDTASKS);
+      var ch  = HDR.CrossDeptTasks;
+      csh.getRange(1,1,1,ch.length).setValues([ch]).setFontWeight('bold').setBackground('#4a148c').setFontColor('#ffffff');
+      csh.setFrozenRows(1);
+    } else {
+      HDR.CrossDeptTasks.forEach(function(col){ try { ensureCol(SN.CDTASKS, col); } catch(_){} });
+    }
+  } catch(_) {}
+
+  // ── Field-to-Report Pipeline sheets ──────────────────────────────
+  var pipelineSheets = [
+    { key: SN.FGEO,   hdr: HDR.FieldGeology,    bg: '#1b5e20', fg: '#ffffff' },
+    { key: SN.FGPHY,  hdr: HDR.FieldGeophysics,  bg: '#0d47a1', fg: '#ffffff' },
+    { key: SN.FGCHEM, hdr: HDR.FieldGeochem,     bg: '#e65100', fg: '#ffffff' },
+    { key: SN.FDRILL, hdr: HDR.FieldDrilling,    bg: '#4e342e', fg: '#ffffff' },
+    { key: SN.DREQS,  hdr: HDR.DataRequests,     bg: '#880e4f', fg: '#ffffff' },
+    { key: SN.POUTS,  hdr: HDR.ProcessedOutputs, bg: '#37474f', fg: '#ffffff' }
+  ];
+  var ssP = SpreadsheetApp.openById(SHEET_ID);
+  pipelineSheets.forEach(function(s) {
+    try {
+      if (!ssP.getSheetByName(s.key)) {
+        var sh2 = ssP.insertSheet(s.key);
+        sh2.getRange(1,1,1,s.hdr.length).setValues([s.hdr])
+           .setFontWeight('bold').setBackground(s.bg).setFontColor(s.fg);
+        sh2.setFrozenRows(1);
+      } else {
+        s.hdr.forEach(function(col){ try { ensureCol(s.key, col); } catch(_){} });
+      }
+    } catch(_) {}
+  });
+}
+
+function seedUsers(sh) {
+  // columns: username, password, role, name, title, site, token, department
+  [['admin',    'admin123','superadmin','Admin (HQ)',        'Exploration Manager','','',''],
+   ['jaiyeola', 'Jaiy@123','superadmin','Gabriel Jaiyeola', 'GMD',                '','',''],
+   ['a.musa',   'field123','geologist', 'A. Musa',           'Geochemist',         'mararaba','','Geochemistry'],
+   ['b.okafor', 'field123','geologist', 'B. Okafor',         'Drilling Geologist', 'wamba',   '','Drilling'],
+   ['c.danjuma','field123','geologist', 'C. Danjuma',        'Geophysicist',       'nasarawa','','Geophysics']
+  ].forEach(function(r){ sh.appendRow(r); });
+}
+
+// Full department catalogue — all 14 DRGL departments
+var ALL_DEPT_SEEDS = [
+  ['dept_geo',   'Geology',          '🪨', 'Geological mapping, lithology logging, structural interpretation'],
+  ['dept_drill', 'Drilling',         '⛏️', 'Drill programme, core logging, casing, progress tracking'],
+  ['dept_gchem', 'Geochemistry',     '⚗️', 'Soil/rock sampling, assay management, lab dispatch'],
+  ['dept_gphy',  'Geophysics',       '📡', 'IP surveys, magnetics, resistivity, seismic acquisition'],
+  ['dept_gis',   'Geoinformatics',   '🖥️', 'GIS data, maps, remote sensing, spatial databases'],
+  ['dept_rnd',   'R&D',              '🔬', 'Research programmes, innovation, pilot studies, technology evaluation'],
+  ['dept_train', 'Training',         '📚', 'Staff development, competency management, HSE training'],
+  ['dept_hydro', 'Hydro',            '💧', 'Hydrogeological surveys, groundwater monitoring, borehole siting'],
+  ['dept_gtech', 'Geotechnical',     '🏗️', 'Slope stability, foundation assessments, ground investigation'],
+  ['dept_env',   'Environmental',    '🌿', 'EIA/EMP management, baseline surveys, closure planning'],
+  ['dept_lic',   'Licensing',        '📜', 'Mineral title applications, renewals, regulatory liaison'],
+  ['dept_comp',  'Compliance',       '✅', 'Statutory reporting, permit conditions, audit management'],
+  ['dept_media', 'Media',            '📸', 'Photography, videography, project documentation, publications'],
+  ['dept_mktg',  'Marketing',        '📣', 'Client relations, proposals, commodity marketing, business development']
+];
+
+function seedDepartments(sh) {
+  var now = Date.now();
+  ALL_DEPT_SEEDS.forEach(function(d) {
+    sh.appendRow([d[0], d[1], d[2], d[3], 'true', 'system', now]);
+  });
+}
+
+function seedSites(sh) {
+  [['mararaba','Mararaba-Babu License Area','Kaduna',  'Ilmenite · Cassiterite · Au','true'],
+   ['wamba',   'Wamba North Pegmatite',     'Nasarawa','Tin / Cassiterite',          'true'],
+   ['nasarawa','Nasarawa South IP Survey',  'Nasarawa','Base metals · Au',           'true'],
+   ['plateau', 'Plateau State Magnetics',   'Plateau', 'Iron ore · REE',            'true'],
+   ['jos',     'Jos North EIA / Compliance','Plateau', 'Environmental',             'true']
+  ].forEach(function(r){ sh.appendRow(r); });
+}
+
+// ───────────────────────────────────────────────────────────────────
+//  AUTH  (called via google.script.run)
+// ───────────────────────────────────────────────────────────────────
+function login(username, password) {
+  // setupSheets() removed — run it once manually from the Apps Script editor.
+  // Calling it here causes a 30-second timeout on every login attempt.
+  // ensure default super-admin users exist; upgrade role if stale
+  try {
+    var master = [
+      { username:'admin',    password:'admin123', role:'superadmin', name:'Admin (HQ)',       title:'Exploration Manager', site:'', token:'', department:'' },
+      { username:'jaiyeola', password:'Jaiy@123', role:'superadmin', name:'Gabriel Jaiyeola', title:'GMD',                 site:'', token:'', department:'' }
+    ];
+    master.forEach(function(m) {
+      var fr = findRow(SN.USERS, 'username', m.username);
+      if (fr.row < 0) {
+        // User doesn't exist — create
+        appendRow(SN.USERS, HDR.Users, m);
+      } else {
+        // Exists — ensure role is superadmin (upgrade from 'admin' if needed)
+        var roleIdx = fr.hdrs.indexOf('role');
+        var currentRole = roleIdx >= 0 ? String(fr.sh.getRange(fr.row, roleIdx+1).getValue()) : '';
+        if (currentRole !== 'superadmin') setCell(fr, 'role', 'superadmin');
+      }
+    });
+  } catch(_) {}
+
+  var u = String(username || '').trim().toLowerCase();
+  var p = String(password || '').trim();
+  if (!u || !p) return { ok: false, error: 'Enter username and password' };
+
+  var list = sheetRows(SN.USERS);
+  var found = null;
+  for (var i = 0; i < list.length; i++) {
+    if (String(list[i].username).toLowerCase() === u && String(list[i].password) === p) {
+      found = list[i]; break;
+    }
+  }
+  if (!found) return { ok: false, error: 'Invalid username or password' };
+
+  var token = Utilities.base64Encode(u + ':' + Date.now());
+  try {
+    var fr = findRow(SN.USERS, 'username', found.username);
+    if (fr.row > 0) setCell(fr, 'token', token);
+  } catch(_) {}
+
+  return { ok: true, token: token, username: found.username,
+           name:        found.name        || found.username,
+           role:        found.role        || 'geologist',
+           site:        found.site        || '',
+           title:       found.title       || '',
+           department:  found.department  || '',
+           leadDepts:   found.leadDepts   || '',
+           supportDepts:found.supportDepts|| '' };
+}
+
+function logout(token) {
+  try {
+    var fr = findRow(SN.USERS, 'token', token);
+    if (fr.row > 0) setCell(fr, 'token', '');
+  } catch(_) {}
+  return { ok: true };
+}
+
+function authUser(token) {
+  var list = sheetRows(SN.USERS);
+  for (var i = 0; i < list.length; i++) {
+    if (list[i].token === token) return list[i];
+  }
+  return null;
+}
+
+// true for superadmin and admin — both can manage data; superadmin also manages users & departments
+function isPrivileged(u) { return u && (u.role === 'admin' || u.role === 'superadmin'); }
+function isSuperAdmin(u) { return u && u.role === 'superadmin'; }
+
+// Public wrapper — called by the frontend on hard refresh to re-validate a stored token
+function validateSession(token) {
+  var u = authUser(token);
+  if (!u) return { ok: false };
+  return { ok: true, token: token, username: u.username,
+           name:       u.name       || u.username,
+           role:       u.role       || 'geologist',
+           site:       u.site       || '',
+           title:      u.title      || '',
+           department: u.department || '' };
+}
+
+// ───────────────────────────────────────────────────────────────────
+//  ROLE MIGRATION  — runs automatically on every doGet()
+//  Upgrades 'admin' → 'superadmin' for the two master accounts
+// ───────────────────────────────────────────────────────────────────
+function migrateRoles() {
+  try {
+    var users = sheetRows(SN.USERS);
+    var superAdmins = ['admin', 'jaiyeola'];
+    users.forEach(function(u) {
+      if (superAdmins.indexOf(String(u.username).toLowerCase()) >= 0 && String(u.role) === 'admin') {
+        var fr = findRow(SN.USERS, 'username', u.username);
+        if (fr.row > 0) setCell(fr, 'role', 'superadmin');
+      }
+    });
+  } catch(_) {}
+}
+
+// ───────────────────────────────────────────────────────────────────
+//  DASHBOARD  (rich analytics)
+// ───────────────────────────────────────────────────────────────────
+function getDashboard(token) {
+  var u = authUser(token);
+  if (!u) return { ok: false, error: 'Session expired' };
+
+  // helpers defined outside try so V8 strict-mode doesn't reject function declarations in blocks
+  var fil = function(rows) {
+    return isPrivileged(u) ? rows : rows.filter(function(r){ return r.site === u.site; });
+  };
+  var countBy = function(rows, key) {
+    var m = {};
+    rows.forEach(function(r){ var v = r[key]||'Unknown'; m[v] = (m[v]||0)+1; });
+    return m;
+  };
+  var sumBy = function(rows, key, groupKey) {
+    var m = {};
+    rows.forEach(function(r){ var v = r[groupKey]||'Unknown'; m[v] = (m[v]||0)+Number(r[key]||0); });
+    return m;
+  };
+  var last30 = function(rows) {
+    var cutoff = Date.now() - 30*24*60*60*1000;
+    return rows.filter(function(r){ return Number(r.timestamp||0) >= cutoff; });
+  };
+  var last7 = function(rows) {
+    var cutoff = Date.now() - 7*24*60*60*1000;
+    return rows.filter(function(r){ return Number(r.timestamp||0) >= cutoff; });
+  };
+  var byMonth = function(rows) {
+    var m = {};
+    rows.forEach(function(r){
+      var d = String(r.date||'').slice(0,7);
+      if (d) m[d] = (m[d]||0)+1;
+    });
+    var keys = Object.keys(m).sort();
+    if (keys.length > 6) keys = keys.slice(keys.length-6);
+    return keys.map(function(k){ return { month: k, count: m[k] }; });
+  };
+
+  try {
+  // Open spreadsheet ONCE — reusing it for all reads avoids 7 separate openById() round-trips
+  var _ss = SpreadsheetApp.openById(SHEET_ID);
+  var rp   = fil(sheetRows(SN.REPORTS,     _ss));
+  var cp   = fil(sheetRows(SN.COMPLAINTS,  _ss));
+  var fn   = fil(sheetRows(SN.FINANCE,     _ss));
+  var dl   = fil(sheetRows(SN.DEPTLOGS,   _ss));
+  var sites = sheetRows(SN.SITES,        _ss).filter(function(s){ return String(s.active) !== 'false'; });
+  var depts = sheetRows(SN.DEPARTMENTS,  _ss).filter(function(d){ return String(d.active) !== 'false'; });
+
+  // ── KPIs ─────────────────────────────────────────────────────────
+  var totalReports    = rp.length;
+  var reportsThisWeek = last7(rp).length;
+  var reportsMonth    = last30(rp).length;
+
+  var totalComplaints  = cp.length;
+  var openComplaints   = cp.filter(function(r){ return r.status==='open'; }).length;
+  var resolvedComplaints = cp.filter(function(r){ return r.status==='resolved'; }).length;
+
+  var totalFinance   = fn.length;
+  var pendingFinance = fn.filter(function(r){ return r.status==='pending'; }).length;
+  var approvedAmt    = fn.filter(function(r){ return r.status==='approved'; })
+                         .reduce(function(s,r){ return s+Number(r.amount||0); }, 0);
+  var pendingAmt     = fn.filter(function(r){ return r.status==='pending'; })
+                         .reduce(function(s,r){ return s+Number(r.amount||0); }, 0);
+
+  var totalDeptLogs   = dl.length;
+  var inProgressLogs  = dl.filter(function(r){ return r.status==='in-progress'; }).length;
+  var completedLogs   = dl.filter(function(r){ return r.status==='completed'; }).length;
+
+  // ── charts data ──────────────────────────────────────────────────
+  // 1. Reports by month (trend)
+  var reportsByMonth = byMonth(rp);
+
+  // 2. Reports by type (bar)
+  var reportsByType = countBy(rp, 'type');
+
+  // 3. Reports by site (bar)
+  var reportsBySite = countBy(rp, 'site');
+
+  // 4. Complaints by priority
+  var complaintsByPriority = countBy(cp, 'priority');
+
+  // 5. Complaints by category
+  var complaintsByCategory = countBy(cp, 'category');
+
+  // 6. Finance by category (total amount)
+  var financeByCategory = sumBy(fn, 'amount', 'category');
+
+  // 7. Finance by site (total amount)
+  var financeBySite = sumBy(fn, 'amount', 'site');
+
+  // 8. Dept logs by department
+  var logsByDept = countBy(dl, 'department');
+
+  // 9. Dept log status breakdown
+  var logsByStatus = countBy(dl, 'status');
+
+  // 10. Recent activity feed (last 8 across all types)
+  var feed = [];
+  rp.slice(-5).forEach(function(r){ feed.push({ type:'report', date:r.date, site:r.site, text:r.type+' — '+String(r.activity).slice(0,60), author:r.authorName, ts:Number(r.timestamp||0) }); });
+  cp.slice(-3).forEach(function(r){ feed.push({ type:'complaint', date:r.date, site:r.site, text:r.subject, author:r.authorName, ts:Number(r.timestamp||0) }); });
+  fn.slice(-3).forEach(function(r){ feed.push({ type:'finance', date:r.date, site:r.site, text:r.category+' — ₦'+Number(r.amount||0).toLocaleString(), author:r.authorName, ts:Number(r.timestamp||0) }); });
+  dl.slice(-3).forEach(function(r){ feed.push({ type:'dept', date:r.date, site:r.site, text:'['+r.department+'] '+r.title, author:r.authorName, ts:Number(r.timestamp||0) }); });
+  feed.sort(function(a,b){ return b.ts - a.ts; });
+  feed = feed.slice(0,10);
+
+  // ── site health (reports last 30d per site) ───────────────────────
+  var rp30 = last30(rp);
+  var siteHealth = sites.map(function(s){
+    var sRp = rp.filter(function(r){ return r.site===s.id; }).length;
+    var sRp30 = rp30.filter(function(r){ return r.site===s.id; }).length;
+    var sCp = cp.filter(function(r){ return r.site===s.id && r.status==='open'; }).length;
+    var sFn = fn.filter(function(r){ return r.site===s.id && r.status==='pending'; }).length;
+    return { id:s.id, name:s.name, state:s.state, minerals:s.minerals,
+             reports:sRp, reports30:sRp30, openComplaints:sCp, pendingFinance:sFn };
+  });
+
+  // ── org map: staff grouped by site with responsibilities ──────────
+  var allUsers = sheetRows(SN.USERS, _ss).filter(function(u){ return String(u.active) !== 'false'; });
+  var staffMap = sites.map(function(s){
+    var members = allUsers.filter(function(u){ return (u.site||'') === s.id; })
+      .map(function(u){
+        return {
+          username:    u.username,
+          name:        u.name || u.username,
+          role:        u.role,
+          title:       u.title || '',
+          leadDepts:   u.leadDepts   ? String(u.leadDepts).split(',').map(function(x){return x.trim();}).filter(Boolean)   : [],
+          supportDepts:u.supportDepts? String(u.supportDepts).split(',').map(function(x){return x.trim();}).filter(Boolean): []
+        };
+      });
+    return { siteId: s.id, siteName: s.name, siteState: s.state||'', lead: s.lead||'', members: members };
+  });
+  // Unassigned staff (no site)
+  var unassigned = allUsers.filter(function(u){ return !u.site || u.site === ''; })
+    .map(function(u){
+      return {
+        username:    u.username,
+        name:        u.name || u.username,
+        role:        u.role,
+        title:       u.title || '',
+        leadDepts:   u.leadDepts   ? String(u.leadDepts).split(',').map(function(x){return x.trim();}).filter(Boolean)   : [],
+        supportDepts:u.supportDepts? String(u.supportDepts).split(',').map(function(x){return x.trim();}).filter(Boolean): []
+      };
+    });
+
+  // ── dept coverage map: who leads/supports each responsibility ─────
+  var deptCoverage = RESPONSIBILITIES.map(function(resp){
+    var leads    = allUsers.filter(function(u){ return (u.leadDepts||'').split(',').map(function(x){return x.trim();}).indexOf(resp) >= 0; })
+                           .map(function(u){ return { username: u.username, name: u.name||u.username, site: u.site||'' }; });
+    var supports = allUsers.filter(function(u){ return (u.supportDepts||'').split(',').map(function(x){return x.trim();}).indexOf(resp) >= 0; })
+                           .map(function(u){ return { username: u.username, name: u.name||u.username, site: u.site||'' }; });
+    return { dept: resp, leads: leads, supports: supports };
+  });
+
+  return {
+    ok: true,
+    // KPIs
+    totalReports:       totalReports,
+    reportsThisWeek:    reportsThisWeek,
+    reportsMonth:       reportsMonth,
+    totalComplaints:    totalComplaints,
+    openComplaints:     openComplaints,
+    resolvedComplaints: resolvedComplaints,
+    totalFinance:       totalFinance,
+    pendingFinance:     pendingFinance,
+    approvedAmt:        approvedAmt,
+    pendingAmt:         pendingAmt,
+    totalDeptLogs:      totalDeptLogs,
+    inProgressLogs:     inProgressLogs,
+    completedLogs:      completedLogs,
+    activeSites:        sites.length,
+    activeDepts:        depts.length,
+    // charts
+    reportsByMonth:       reportsByMonth,
+    reportsByType:        reportsByType,
+    reportsBySite:        reportsBySite,
+    complaintsByPriority: complaintsByPriority,
+    complaintsByCategory: complaintsByCategory,
+    financeByCategory:    financeByCategory,
+    financeBySite:        financeBySite,
+    logsByDept:           logsByDept,
+    logsByStatus:         logsByStatus,
+    // tables
+    siteHealth:    siteHealth,
+    recentFeed:    feed,
+    // org graphics
+    staffMap:      staffMap,
+    unassigned:    unassigned,
+    deptCoverage:  deptCoverage
+  };
+  } catch(e) {
+    return { ok: false, error: 'Dashboard error: ' + (e.message || e.toString() || 'unknown error') };
+  }
+}
+
+// ───────────────────────────────────────────────────────────────────
+//  SITES
+// ───────────────────────────────────────────────────────────────────
+function getSites(token) {
+  if (!authUser(token)) return { ok: false, error: 'Session expired' };
+  return { ok: true, data: sheetRows(SN.SITES)
+    .filter(function(s){ return String(s.active) !== 'false'; })
+    .map(function(s){
+      return { id: s.id, name: s.name, state: s.state, minerals: s.minerals,
+               active: s.active, lead: s.lead || '' };
+    })
+  };
+}
+
+function addSite(token, data) {
+  var u = authUser(token);
+  if (!u || !isPrivileged(u)) return { ok: false, error: 'Admin only' };
+  var name = String(data.name || '').trim();
+  if (!name) return { ok: false, error: 'Site name required' };
+  // generate a clean id from the name
+  var id = name.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '').slice(0, 20);
+  // ensure uniqueness
+  var existing = sheetRows(SN.SITES);
+  for (var i = 0; i < existing.length; i++) {
+    if (String(existing[i].id) === id || String(existing[i].name).toLowerCase() === name.toLowerCase())
+      return { ok: false, error: 'Site already exists' };
+  }
+  var rec = {
+    id:       id,
+    name:     name,
+    state:    data.state    || '',
+    minerals: data.minerals || '',
+    active:   'true'
+  };
+  appendRow(SN.SITES, HDR.Sites, rec);
+  return { ok: true, data: rec };
+}
+
+function deleteSite(token, id) {
+  var u = authUser(token);
+  if (!u || !isPrivileged(u)) return { ok: false, error: 'Admin only' };
+  var fr = findRow(SN.SITES, 'id', id);
+  if (fr.row < 0) return { ok: false, error: 'Site not found' };
+  // soft-delete
+  setCell(fr, 'active', 'false');
+  return { ok: true };
+}
+
+/**
+ * Returns all users assigned to a site plus the site's designated lead.
+ */
+function getSiteMembers(token, siteId) {
+  var u = authUser(token);
+  if (!u) return { ok: false, error: 'Session expired' };
+  var users = sheetRows(SN.USERS)
+    .filter(function(x){ return (x.site || '') === siteId; })
+    .map(function(x){
+      return { username: x.username, name: x.name, role: x.role,
+               title: x.title, department: x.department || '' };
+    });
+  // Get lead from Sites sheet
+  var lead = '';
+  try {
+    var fr = findRow(SN.SITES, 'id', siteId);
+    if (fr.row > 0) {
+      var li = fr.hdrs.indexOf('lead');
+      if (li >= 0) lead = String(fr.sh.getRange(fr.row, li + 1).getValue() || '');
+    }
+  } catch(_) {}
+  return { ok: true, data: { lead: lead, members: users } };
+}
+
+/**
+ * Designates a username as the site lead (admin+).
+ */
+function setSiteLead(token, siteId, username) {
+  var u = authUser(token);
+  if (!u || !isPrivileged(u)) return { ok: false, error: 'Admin only' };
+  var fr = findRow(SN.SITES, 'id', siteId);
+  if (fr.row < 0) return { ok: false, error: 'Site not found' };
+  try { ensureCol(SN.SITES, 'lead'); } catch(_) {}
+  var fr2 = findRow(SN.SITES, 'id', siteId);
+  setCell(fr2, 'lead', username);
+  return { ok: true };
+}
+
+/**
+ * Returns assignments for a specific site (where assignedTo user's site matches OR
+ * the assignment has a 'site' field — stored in the 'department' column as siteId).
+ * We store site assignments using the Assignments sheet with department = siteId prefixed 'site:'.
+ */
+function getSiteAssignments(token, siteId) {
+  var u = authUser(token);
+  if (!u) return { ok: false, error: 'Session expired' };
+  var tag = 'site:' + siteId;
+  var rows = sheetRows(SN.ASSIGNMENTS).filter(function(r){
+    return String(r.department || '') === tag && String(r.status || '') !== 'deleted';
+  });
+  rows.sort(function(a,b){ return Number(b.timestamp) - Number(a.timestamp); });
+  return { ok: true, data: rows };
+}
+
+/**
+ * Adds an assignment for a site (stored with department = 'site:<siteId>').
+ */
+function addSiteAssignment(token, data) {
+  var u = authUser(token);
+  if (!u || !isPrivileged(u)) return { ok: false, error: 'Admin only' };
+  if (!data.title) return { ok: false, error: 'Title required' };
+  var siteId = data.site || '';
+  var assigneeName = '';
+  if (data.assignedTo) {
+    var fr = findRow(SN.USERS, 'username', data.assignedTo);
+    if (fr.row > 0) {
+      var ni = fr.hdrs.indexOf('name');
+      if (ni >= 0) assigneeName = String(fr.sh.getRange(fr.row, ni+1).getValue() || '');
+    }
+  }
+  var rec = {
+    id:             uid(),
+    department:     'site:' + siteId,
+    project:        data.project || '',
+    title:          data.title,
+    description:    data.description || '',
+    assignedTo:     data.assignedTo || '',
+    assignedToName: assigneeName,
+    priority:       data.priority || 'medium',
+    dueDate:        data.dueDate || '',
+    progress:       0,
+    status:         'active',
+    major1:         data.major1   || '',
+    major2:         data.major2   || '',
+    support1:       data.support1 || '',
+    support2:       data.support2 || '',
+    createdBy:      u.username,
+    createdByName:  u.name,
+    timestamp:      Date.now()
+  };
+  appendRow(SN.ASSIGNMENTS, HDR.Assignments, rec);
+  return { ok: true, data: rec };
+}
+
+// ───────────────────────────────────────────────────────────────────
+//  DAILY REPORTS
+// ───────────────────────────────────────────────────────────────────
+function getReports(token, siteFilter) {
+  var u = authUser(token);
+  if (!u) return { ok: false, error: 'Session expired' };
+  var rows = sheetRows(SN.REPORTS);
+  if (!isPrivileged(u)) rows = rows.filter(function(r){ return r.site === u.site; });
+  else if (siteFilter) rows = rows.filter(function(r){ return r.site === siteFilter; });
+  rows.sort(function(a,b){ return Number(b.timestamp) - Number(a.timestamp); });
+  return { ok: true, data: rows };
+}
+
+function addReport(token, data) {
+  var u = authUser(token);
+  if (!u) return { ok: false, error: 'Session expired' };
+  var rec = {
+    id: uid(),
+    site: isPrivileged(u) ? (data.site || u.site) : u.site,
+    author: u.username, authorName: u.name,
+    date: data.date || new Date().toISOString().slice(0,10),
+    type: data.type || '', activity: data.activity || '',
+    weather: data.weather || '', progress: data.progress || '',
+    crew: data.crew || '', issues: data.issues || 'None',
+    timestamp: Date.now()
+  };
+  appendRow(SN.REPORTS, HDR.DailyReports, rec);
+  return { ok: true, data: rec };
+}
+
+function deleteReport(token, id) {
+  var u = authUser(token);
+  if (!u) return { ok: false, error: 'Session expired' };
+  if (!isPrivileged(u)) return { ok: false, error: 'Admin only' };
+  var fr = findRow(SN.REPORTS, 'id', id);
+  if (fr.row < 0) return { ok: false, error: 'Not found' };
+  fr.sh.deleteRow(fr.row);
+  return { ok: true };
+}
+
+// ───────────────────────────────────────────────────────────────────
+//  COMPLAINTS
+// ───────────────────────────────────────────────────────────────────
+function getComplaints(token, siteFilter) {
+  var u = authUser(token);
+  if (!u) return { ok: false, error: 'Session expired' };
+  var rows = sheetRows(SN.COMPLAINTS);
+  if (!isPrivileged(u)) rows = rows.filter(function(r){ return r.site === u.site; });
+  else if (siteFilter) rows = rows.filter(function(r){ return r.site === siteFilter; });
+  rows.sort(function(a,b){ return Number(b.timestamp) - Number(a.timestamp); });
+  return { ok: true, data: rows };
+}
+
+function addComplaint(token, data) {
+  var u = authUser(token);
+  if (!u) return { ok: false, error: 'Session expired' };
+  var rec = {
+    id: uid(),
+    site: isPrivileged(u) ? (data.site || u.site) : u.site,
+    author: u.username, authorName: u.name,
+    date: data.date || new Date().toISOString().slice(0,10),
+    category: data.category || '', priority: data.priority || 'medium',
+    subject: data.subject || '', detail: data.detail || '',
+    status: 'open', resolvedBy: '', resolvedAt: '', timestamp: Date.now()
+  };
+  appendRow(SN.COMPLAINTS, HDR.Complaints, rec);
+  return { ok: true, data: rec };
+}
+
+function updateComplaintStatus(token, id, status) {
+  var u = authUser(token);
+  if (!u) return { ok: false, error: 'Session expired' };
+  if (!isPrivileged(u)) return { ok: false, error: 'Admin only' };
+  var fr = findRow(SN.COMPLAINTS, 'id', id);
+  if (fr.row < 0) return { ok: false, error: 'Not found' };
+  setCell(fr, 'status', status);
+  setCell(fr, 'resolvedBy', u.username);
+  setCell(fr, 'resolvedAt', new Date().toISOString());
+  return { ok: true };
+}
+
+// ───────────────────────────────────────────────────────────────────
+//  FINANCE
+// ───────────────────────────────────────────────────────────────────
+function getFinance(token, siteFilter) {
+  var u = authUser(token);
+  if (!u) return { ok: false, error: 'Session expired' };
+  var rows = sheetRows(SN.FINANCE);
+  if (!isPrivileged(u)) rows = rows.filter(function(r){ return r.site === u.site; });
+  else if (siteFilter) rows = rows.filter(function(r){ return r.site === siteFilter; });
+  rows.sort(function(a,b){ return Number(b.timestamp) - Number(a.timestamp); });
+  return { ok: true, data: rows };
+}
+
+function addFinance(token, data) {
+  var u = authUser(token);
+  if (!u) return { ok: false, error: 'Session expired' };
+  var rec = {
+    id: uid(),
+    site: isPrivileged(u) ? (data.site || u.site) : u.site,
+    author: u.username, authorName: u.name,
+    date: data.date || new Date().toISOString().slice(0,10),
+    category: data.category || '', amount: data.amount || 0,
+    urgency: data.urgency || 'normal', description: data.description || '',
+    status: 'pending', approvedBy: '', approvedAt: '', timestamp: Date.now()
+  };
+  appendRow(SN.FINANCE, HDR.FinanceRequests, rec);
+  return { ok: true, data: rec };
+}
+
+function updateFinanceStatus(token, id, status) {
+  var u = authUser(token);
+  if (!u) return { ok: false, error: 'Session expired' };
+  if (!isPrivileged(u)) return { ok: false, error: 'Admin only' };
+  var fr = findRow(SN.FINANCE, 'id', id);
+  if (fr.row < 0) return { ok: false, error: 'Not found' };
+  setCell(fr, 'status', status);
+  setCell(fr, 'approvedBy', u.username);
+  setCell(fr, 'approvedAt', new Date().toISOString());
+  return { ok: true };
+}
+
+// ───────────────────────────────────────────────────────────────────
+//  USERS (admin only)
+// ───────────────────────────────────────────────────────────────────
+function getConfig(token) {
+  // Returns shared config data (does not require admin — any logged-in user)
+  if (!authUser(token)) return { ok: false, error: 'Session expired' };
+  return { ok: true, data: { responsibilities: RESPONSIBILITIES } };
+}
+
+function getUsers(token) {
+  var u = authUser(token);
+  if (!u || !isPrivileged(u)) return { ok: false, error: 'Admin only' };
+  return { ok: true, data: sheetRows(SN.USERS).map(function(x){
+    return { username: x.username, name: x.name, role: x.role, title: x.title,
+             site: x.site, department: x.department || '',
+             leadDepts:    x.leadDepts    || '',
+             supportDepts: x.supportDepts || '',
+             password: x.password ? '●●●●●●' : '' };
+  })};
+}
+
+function addUser(token, data) {
+  var u = authUser(token);
+  if (!u || !isSuperAdmin(u)) return { ok: false, error: 'Super-admin only' };
+  if (!data.username || !data.password) return { ok: false, error: 'Username and password required' };
+  if (findRow(SN.USERS, 'username', data.username).row > 0) return { ok: false, error: 'Username already exists' };
+  try { ensureCol(SN.USERS, 'department'); } catch(_) {}
+  try { ensureCol(SN.USERS, 'leadDepts'); } catch(_) {}
+  try { ensureCol(SN.USERS, 'supportDepts'); } catch(_) {}
+  getSheet(SN.USERS).appendRow([data.username, data.password, data.role || 'geologist',
+    data.name || data.username, data.title || '', data.site || '', '',
+    data.department || '', data.leadDepts || '', data.supportDepts || '']);
+  return { ok: true };
+}
+
+function updateUser(token, username, changes) {
+  var u = authUser(token);
+  if (!u || !isSuperAdmin(u)) return { ok: false, error: 'Super-admin only' };
+  var fr = findRow(SN.USERS, 'username', username);
+  if (fr.row < 0) return { ok: false, error: 'User not found' };
+  try { ensureCol(SN.USERS, 'department'); } catch(_) {}
+  try { ensureCol(SN.USERS, 'leadDepts'); } catch(_) {}
+  try { ensureCol(SN.USERS, 'supportDepts'); } catch(_) {}
+  var allowed = ['password','role','name','title','site','department','leadDepts','supportDepts'];
+  // Re-find after ensureCol may shift columns
+  var fr2 = findRow(SN.USERS, 'username', username);
+  allowed.forEach(function(k){ if (changes[k] !== undefined && changes[k] !== null) setCell(fr2, k, changes[k]); });
+  return { ok: true };
+}
+
+function deleteUser(token, username) {
+  var u = authUser(token);
+  if (!u || !isSuperAdmin(u)) return { ok: false, error: 'Super-admin only' };
+  if (username === u.username) return { ok: false, error: 'Cannot delete yourself' };
+  var fr = findRow(SN.USERS, 'username', username);
+  if (fr.row < 0) return { ok: false, error: 'User not found' };
+  fr.sh.deleteRow(fr.row);
+  return { ok: true };
+}
+
+// ───────────────────────────────────────────────────────────────────
+//  DEPARTMENTS  (dynamic — stored in Departments sheet)
+// ───────────────────────────────────────────────────────────────────
+function getDepartments(token) {
+  if (!authUser(token)) return { ok: false, error: 'Session expired' };
+  // setupSheets() removed — sheets must be created once manually from the editor
+  var rows = sheetRows(SN.DEPARTMENTS).filter(function(r){ return String(r.active) !== 'false'; });
+  return { ok: true, data: rows };
+}
+
+function addDepartment(token, data) {
+  var u = authUser(token);
+  if (!u || !isSuperAdmin(u)) return { ok: false, error: 'Super-admin only' };
+  var name = String(data.name || '').trim();
+  if (!name) return { ok: false, error: 'Department name required' };
+  // check duplicate (case-insensitive)
+  var existing = sheetRows(SN.DEPARTMENTS);
+  for (var i = 0; i < existing.length; i++) {
+    if (String(existing[i].name).toLowerCase() === name.toLowerCase())
+      return { ok: false, error: 'Department already exists' };
+  }
+  var rec = {
+    id:          'dept_' + uid(),
+    name:        name,
+    icon:        data.icon || '🏢',
+    description: data.description || '',
+    active:      'true',
+    createdBy:   u.username,
+    timestamp:   Date.now()
+  };
+  appendRow(SN.DEPARTMENTS, HDR.Departments, rec);
+  return { ok: true, data: rec };
+}
+
+function deleteDepartment(token, id) {
+  var u = authUser(token);
+  if (!u || !isSuperAdmin(u)) return { ok: false, error: 'Super-admin only' };
+  var fr = findRow(SN.DEPARTMENTS, 'id', id);
+  if (fr.row < 0) return { ok: false, error: 'Not found' };
+  // soft-delete: mark inactive instead of deleting row
+  setCell(fr, 'active', 'false');
+  return { ok: true };
+}
+
+function getDeptLogs(token, dept, siteFilter) {
+  var u = authUser(token);
+  if (!u) return { ok: false, error: 'Session expired' };
+  var rows = sheetRows(SN.DEPTLOGS);
+  if (dept) rows = rows.filter(function(r){ return r.department === dept; });
+  if (!isPrivileged(u)) rows = rows.filter(function(r){ return r.site === u.site; });
+  else if (siteFilter) rows = rows.filter(function(r){ return r.site === siteFilter; });
+  rows.sort(function(a,b){ return Number(b.timestamp) - Number(a.timestamp); });
+  return { ok: true, data: rows };
+}
+
+function addDeptLog(token, data) {
+  var u = authUser(token);
+  if (!u) return { ok: false, error: 'Session expired' };
+  // validate against live departments list
+  var depts = sheetRows(SN.DEPARTMENTS).filter(function(r){ return String(r.active) !== 'false'; });
+  var valid = depts.some(function(d){ return d.name === data.department; });
+  if (!valid) return { ok: false, error: 'Invalid department' };
+  var rec = {
+    id:             uid(),
+    department:     data.department,
+    site:           isPrivileged(u) ? (data.site || u.site) : u.site,
+    author:         u.username,
+    authorName:     u.name,
+    date:           data.date || new Date().toISOString().slice(0,10),
+    title:          data.title || '',
+    description:    data.description || '',
+    status:         data.status || 'in-progress',
+    attachmentNote: data.attachmentNote || '',
+    timestamp:      Date.now(),
+    project:        data.project || '',
+    workflowStage:  data.workflowStage || ''
+  };
+  appendRow(SN.DEPTLOGS, HDR.DeptLogs, rec);
+  return { ok: true, data: rec };
+}
+
+function deleteDeptLog(token, id) {
+  var u = authUser(token);
+  if (!u) return { ok: false, error: 'Session expired' };
+  if (!isPrivileged(u)) return { ok: false, error: 'Admin only' };
+  var fr = findRow(SN.DEPTLOGS, 'id', id);
+  if (fr.row < 0) return { ok: false, error: 'Not found' };
+  fr.sh.deleteRow(fr.row);
+  return { ok: true };
+}
+
+function updateDeptLogStatus(token, id, status) {
+  var u = authUser(token);
+  if (!u) return { ok: false, error: 'Session expired' };
+  var fr = findRow(SN.DEPTLOGS, 'id', id);
+  if (fr.row < 0) return { ok: false, error: 'Not found' };
+  setCell(fr, 'status', status);
+  return { ok: true };
+}
+
+// Returns all distinct projects for a department, with per-stage log counts and latest status
+function getDeptProjects(token, dept) {
+  var u = authUser(token);
+  if (!u) return { ok: false, error: 'Session expired' };
+  var rows = sheetRows(SN.DEPTLOGS).filter(function(r){ return r.department === dept && r.project; });
+  if (!isPrivileged(u)) rows = rows.filter(function(r){ return r.site === u.site; });
+  // Build project map: { projectName → { name, logs: [row,...], latestTs } }
+  var map = {};
+  rows.forEach(function(r){
+    var p = r.project;
+    if (!map[p]) map[p] = { name: p, logs: [], latestTs: 0 };
+    map[p].logs.push(r);
+    if (Number(r.timestamp) > map[p].latestTs) map[p].latestTs = Number(r.timestamp);
+  });
+  var projects = Object.keys(map).map(function(k){ return map[k]; });
+  projects.sort(function(a,b){ return b.latestTs - a.latestTs; });
+  return { ok: true, data: projects };
+}
+
+// ───────────────────────────────────────────────────────────────────
+//  DEPARTMENT MEMBERS & LEAD
+// ───────────────────────────────────────────────────────────────────
+/**
+ * Returns all users in a department plus the department's designated lead.
+ */
+function getDeptMembers(token, dept) {
+  var u = authUser(token);
+  if (!u) return { ok: false, error: 'Session expired' };
+  var users = sheetRows(SN.USERS)
+    .filter(function(x){ return (x.department||'') === dept; })
+    .map(function(x){
+      return { username: x.username, name: x.name, role: x.role, title: x.title, site: x.site };
+    });
+  // Get lead from Departments sheet
+  var lead = '';
+  try {
+    var fr = findRow(SN.DEPARTMENTS, 'name', dept);
+    if (fr.row > 0) {
+      var li = fr.hdrs.indexOf('lead');
+      if (li >= 0) lead = String(fr.sh.getRange(fr.row, li+1).getValue()||'');
+    }
+  } catch(_) {}
+  return { ok: true, data: { lead: lead, members: users } };
+}
+
+/**
+ * Designates a username as the department lead (admin+).
+ */
+function setDeptLead(token, dept, username) {
+  var u = authUser(token);
+  if (!u || !isPrivileged(u)) return { ok: false, error: 'Admin only' };
+  var fr = findRow(SN.DEPARTMENTS, 'name', dept);
+  if (fr.row < 0) return { ok: false, error: 'Department not found' };
+  // Ensure lead column exists
+  try { ensureCol(SN.DEPARTMENTS, 'lead'); } catch(_) {}
+  // Re-find after ensureCol may have shifted cols
+  var fr2 = findRow(SN.DEPARTMENTS, 'name', dept);
+  setCell(fr2, 'lead', username);
+  return { ok: true };
+}
+
+// ───────────────────────────────────────────────────────────────────
+//  ASSIGNMENTS  (project-level tasks assigned to team leads)
+// ───────────────────────────────────────────────────────────────────
+function getAssignments(token, dept) {
+  var u = authUser(token);
+  if (!u) return { ok: false, error: 'Session expired' };
+  var rows = sheetRows(SN.ASSIGNMENTS);
+  if (dept) rows = rows.filter(function(r){ return r.department === dept; });
+  // non-privileged staff: only see assignments in their department
+  if (!isPrivileged(u) && u.department) {
+    rows = rows.filter(function(r){ return r.department === u.department; });
+  }
+  rows.sort(function(a,b){ return Number(b.timestamp) - Number(a.timestamp); });
+  return { ok: true, data: rows };
+}
+
+function addAssignment(token, data) {
+  var u = authUser(token);
+  if (!u || !isPrivileged(u)) return { ok: false, error: 'Admin only' };
+  if (!data.title) return { ok: false, error: 'Title required' };
+  if (!data.department) return { ok: false, error: 'Department required' };
+  // resolve assignee name from Users sheet
+  var assigneeName = data.assignedTo || '';
+  try {
+    var fr = findRow(SN.USERS, 'username', data.assignedTo);
+    if (fr.row > 0) {
+      var ni = fr.hdrs.indexOf('name');
+      if (ni >= 0) assigneeName = String(fr.sh.getRange(fr.row, ni+1).getValue()) || data.assignedTo;
+    }
+  } catch(_) {}
+  var rec = {
+    id:            uid(),
+    department:    data.department,
+    project:       data.project || '',
+    title:         data.title,
+    description:   data.description || '',
+    assignedTo:    data.assignedTo || '',
+    assignedToName:assigneeName,
+    priority:      data.priority || 'medium',
+    dueDate:       data.dueDate || '',
+    progress:      0,
+    status:        'active',
+    major1:        data.major1   || '',
+    major2:        data.major2   || '',
+    support1:      data.support1 || '',
+    support2:      data.support2 || '',
+    createdBy:     u.username,
+    createdByName: u.name,
+    timestamp:     Date.now()
+  };
+  appendRow(SN.ASSIGNMENTS, HDR.Assignments, rec);
+  return { ok: true, data: rec };
+}
+
+function updateAssignmentProgress(token, id, progress, status) {
+  var u = authUser(token);
+  if (!u) return { ok: false, error: 'Session expired' };
+  var fr = findRow(SN.ASSIGNMENTS, 'id', id);
+  if (fr.row < 0) return { ok: false, error: 'Assignment not found' };
+  // only assignee or admins can update
+  var assigneeIdx = fr.hdrs.indexOf('assignedTo');
+  var assignee = assigneeIdx >= 0 ? String(fr.sh.getRange(fr.row, assigneeIdx+1).getValue()) : '';
+  if (!isPrivileged(u) && u.username !== assignee) return { ok: false, error: 'Not authorised' };
+  var pct = Math.max(0, Math.min(100, Number(progress) || 0));
+  setCell(fr, 'progress', pct);
+  if (status) setCell(fr, 'status', status);
+  else if (pct === 100) setCell(fr, 'status', 'completed');
+  return { ok: true };
+}
+
+function deleteAssignment(token, id) {
+  var u = authUser(token);
+  if (!u || !isPrivileged(u)) return { ok: false, error: 'Admin only' };
+  var fr = findRow(SN.ASSIGNMENTS, 'id', id);
+  if (fr.row < 0) return { ok: false, error: 'Not found' };
+  // also remove all comments for this assignment
+  try {
+    var comments = sheetRows(SN.ASGCOMMENTS);
+    // delete in reverse so row indices don't shift
+    var csh = getSheet(SN.ASGCOMMENTS);
+    var cData = csh.getDataRange().getValues();
+    var cHdrs = cData[0].map(function(h){ return String(h).trim(); });
+    var asgIdx = cHdrs.indexOf('assignmentId');
+    for (var i = cData.length-1; i >= 1; i--) {
+      if (String(cData[i][asgIdx]) === String(id)) csh.deleteRow(i+1);
+    }
+  } catch(_) {}
+  fr.sh.deleteRow(fr.row);
+  return { ok: true };
+}
+
+// ───────────────────────────────────────────────────────────────────
+//  ASSIGNMENT COMMENTS  (technical discussions per assignment)
+// ───────────────────────────────────────────────────────────────────
+function getAssignmentComments(token, assignmentId) {
+  var u = authUser(token);
+  if (!u) return { ok: false, error: 'Session expired' };
+  if (!assignmentId) return { ok: false, error: 'assignmentId required' };
+  var rows = sheetRows(SN.ASGCOMMENTS)
+    .filter(function(r){ return String(r.assignmentId) === String(assignmentId); });
+  rows.sort(function(a,b){ return Number(a.timestamp) - Number(b.timestamp); });
+  return { ok: true, data: rows };
+}
+
+function addAssignmentComment(token, assignmentId, message) {
+  var u = authUser(token);
+  if (!u) return { ok: false, error: 'Session expired' };
+  if (!assignmentId) return { ok: false, error: 'assignmentId required' };
+  if (!String(message||'').trim()) return { ok: false, error: 'Message required' };
+  // verify assignment exists and user has access to its department
+  try {
+    var asgRow = sheetRows(SN.ASSIGNMENTS).filter(function(r){ return r.id === assignmentId; })[0];
+    if (!asgRow) return { ok: false, error: 'Assignment not found' };
+    if (!isPrivileged(u) && u.department && asgRow.department !== u.department) {
+      return { ok: false, error: 'Not authorised' };
+    }
+  } catch(_) {}
+  var rec = {
+    id:           uid(),
+    assignmentId: assignmentId,
+    author:       u.username,
+    authorName:   u.name,
+    message:      String(message).trim(),
+    timestamp:    Date.now()
+  };
+  appendRow(SN.ASGCOMMENTS, HDR.AssignmentComments, rec);
+  return { ok: true, data: rec };
+}
+
+function deleteAssignmentComment(token, id) {
+  var u = authUser(token);
+  if (!u || !isPrivileged(u)) return { ok: false, error: 'Admin only' };
+  var fr = findRow(SN.ASGCOMMENTS, 'id', id);
+  if (fr.row < 0) return { ok: false, error: 'Not found' };
+  fr.sh.deleteRow(fr.row);
+  return { ok: true };
+}
+
+// ───────────────────────────────────────────────────────────────────
+//  FIELD DATA — per-department structured field records
+// ───────────────────────────────────────────────────────────────────
+function getFieldRecords(token, dept, siteFilter) {
+  var u = authUser(token);
+  if (!u) return { ok: false, error: 'Session expired' };
+  var rows = sheetRows(SN.FIELDDATA).filter(function(r){
+    if (String(r.active||'true') === 'false') return false;
+    if (dept && String(r.dept||'') !== dept) return false;
+    if (siteFilter && String(r.site||'') !== siteFilter) return false;
+    return true;
+  });
+  rows.sort(function(a,b){ return Number(b.timestamp) - Number(a.timestamp); });
+  return { ok: true, data: rows };
+}
+
+function addFieldRecord(token, data) {
+  var u = authUser(token);
+  if (!u) return { ok: false, error: 'Session expired' };
+  if (!data.title)      return { ok: false, error: 'Title required' };
+  if (!data.recordType) return { ok: false, error: 'Record type required' };
+  var rec = {
+    id:            uid(),
+    dept:          data.dept        || '',
+    site:          data.site        || u.site || '',
+    recordType:    data.recordType,
+    title:         data.title,
+    description:   data.description || '',
+    gpsLat:        data.gpsLat      || '',
+    gpsLon:        data.gpsLon      || '',
+    elevation:     data.elevation   || '',
+    sampleId:      data.sampleId    || '',
+    formation:     data.formation   || '',
+    fileUrls:      data.fileUrls    || '',   // comma-separated Drive share links
+    tags:          data.tags        || '',
+    uploadedBy:    u.username,
+    uploadedByName:u.name,
+    timestamp:     Date.now(),
+    active:        'true'
+  };
+  appendRow(SN.FIELDDATA, HDR.FieldData, rec);
+  return { ok: true, data: rec };
+}
+
+function deleteFieldRecord(token, id) {
+  var u = authUser(token);
+  if (!u) return { ok: false, error: 'Session expired' };
+  var fr = findRow(SN.FIELDDATA, 'id', id);
+  if (fr.row < 0) return { ok: false, error: 'Not found' };
+  // Check ownership or admin privilege
+  var ownIdx = fr.hdrs.indexOf('uploadedBy');
+  var owner = ownIdx >= 0 ? String(fr.sh.getRange(fr.row, ownIdx+1).getValue()||'') : '';
+  if (!isPrivileged(u) && owner !== u.username) return { ok: false, error: 'Not authorised' };
+  setCell(fr, 'active', 'false');
+  return { ok: true };
+}
+
+// ───────────────────────────────────────────────────────────────────
+//  FILE UPLOADS — upload to Google Drive, store metadata in Uploads sheet
+//  context: 'fieldrecord' | 'deptlog' | 'report'
+//  contextId: the id of the parent record (or '' for standalone reports)
+// ───────────────────────────────────────────────────────────────────
+
+// ═══════════════════════════════════════════════════════════════════
+//  CROSS-DEPARTMENT PROJECTS  (Projects + CrossDeptTasks)
+// ═══════════════════════════════════════════════════════════════════
+
+/** Create a new cross-department project */
+function createProject(token, data) {
+  var u = authUser(token);
+  if (!u) return { ok: false, error: 'Session expired' };
+  if (!isPrivileged(u)) return { ok: false, error: 'Admin access required' };
+  if (!data || !data.name) return { ok: false, error: 'Project name required' };
+  var rec = {
+    id:            uid(),
+    name:          data.name,
+    licenceNo:     data.licenceNo   || '',
+    site:          data.site        || '',
+    minerals:      data.minerals    || '',
+    status:        data.status      || 'active',
+    leadDept:      data.leadDept    || '',
+    description:   data.description || '',
+    createdBy:     u.username,
+    createdByName: u.name,
+    timestamp:     Date.now(),
+    active:        'true'
+  };
+  appendRow(SN.PROJECTS, HDR.Projects, rec);
+  return { ok: true, id: rec.id };
+}
+
+/** Update project status or description */
+function updateProject(token, id, patch) {
+  var u = authUser(token);
+  if (!u) return { ok: false, error: 'Session expired' };
+  if (!isPrivileged(u)) return { ok: false, error: 'Admin access required' };
+  var fr = findRow(SN.PROJECTS, 'id', id);
+  if (fr.row < 0) return { ok: false, error: 'Project not found' };
+  var allowed = ['name','licenceNo','site','minerals','status','leadDept','description',
+                 'closureStage','closureReason','closedBy','closedDate'];
+  allowed.forEach(function(k){ if (patch[k] != null) setCell(fr, k, patch[k]); });
+  return { ok: true };
+}
+
+/** Soft-delete a project */
+function deleteProject(token, id) {
+  var u = authUser(token);
+  if (!u) return { ok: false, error: 'Session expired' };
+  if (!isPrivileged(u)) return { ok: false, error: 'Admin access required' };
+  var fr = findRow(SN.PROJECTS, 'id', id);
+  if (fr.row < 0) return { ok: false, error: 'Not found' };
+  setCell(fr, 'active', 'false');
+  return { ok: true };
+}
+
+/** List all active projects; optionally filter by site or status */
+function getProjects(token, siteFilter, statusFilter) {
+  var u = authUser(token);
+  if (!u) return { ok: false, error: 'Session expired' };
+  var rows = sheetRows(SN.PROJECTS).filter(function(r){ return String(r.active||'true') !== 'false'; });
+  if (siteFilter)   rows = rows.filter(function(r){ return r.site === siteFilter; });
+  if (statusFilter) rows = rows.filter(function(r){ return r.status === statusFilter; });
+  rows.sort(function(a,b){ return Number(b.timestamp) - Number(a.timestamp); });
+  return { ok: true, data: rows };
+}
+
+/** Get one project with all its dept logs and cross-dept tasks */
+function getProjectDetail(token, projectId) {
+  var u = authUser(token);
+  if (!u) return { ok: false, error: 'Session expired' };
+  var fr = findRow(SN.PROJECTS, 'id', projectId);
+  if (fr.row < 0) return { ok: false, error: 'Project not found' };
+  var proj = sheetRows(SN.PROJECTS).filter(function(r){ return r.id === projectId; })[0];
+  if (!proj) return { ok: false, error: 'Not found' };
+
+  // Collect all dept logs for this project (matched by project name across all depts)
+  var allLogs = sheetRows(SN.DEPTLOGS).filter(function(r){
+    return String(r.active||'true') !== 'false' && r.project === proj.name;
+  });
+  if (!isPrivileged(u)) allLogs = allLogs.filter(function(r){ return r.site === u.site; });
+  allLogs.sort(function(a,b){ return Number(a.timestamp) - Number(b.timestamp); });
+
+  // Collect cross-dept tasks for this project
+  var tasks = sheetRows(SN.CDTASKS).filter(function(r){
+    return String(r.active||'true') !== 'false' && r.projectId === projectId;
+  });
+  tasks.sort(function(a,b){ return Number(b.timestamp) - Number(a.timestamp); });
+
+  // Group logs by department
+  var byDept = {};
+  allLogs.forEach(function(r){
+    var d = r.department || 'Unknown';
+    if (!byDept[d]) byDept[d] = [];
+    byDept[d].push(r);
+  });
+
+  return { ok: true, project: proj, logsByDept: byDept, tasks: tasks };
+}
+
+/** Create a cross-dept task (notify another dept to act) */
+function createCrossDeptTask(token, data) {
+  var u = authUser(token);
+  if (!u) return { ok: false, error: 'Session expired' };
+  if (!data || !data.toDept || !data.title) return { ok: false, error: 'toDept and title required' };
+  var rec = {
+    id:              uid(),
+    projectId:       data.projectId       || '',
+    projectName:     data.projectName     || '',
+    fromDept:        data.fromDept        || u.department || '',
+    toDept:          data.toDept,
+    title:           data.title,
+    description:     data.description     || '',
+    priority:        data.priority        || 'normal',
+    status:          'open',
+    sourceDeptLogId: data.sourceDeptLogId || '',
+    createdBy:       u.username,
+    createdByName:   u.name,
+    timestamp:       Date.now(),
+    resolvedBy:      '',
+    resolvedAt:      '',
+    active:          'true'
+  };
+  appendRow(SN.CDTASKS, HDR.CrossDeptTasks, rec);
+  return { ok: true, id: rec.id };
+}
+
+/** Resolve (close) a cross-dept task */
+function resolveCrossDeptTask(token, id) {
+  var u = authUser(token);
+  if (!u) return { ok: false, error: 'Session expired' };
+  var fr = findRow(SN.CDTASKS, 'id', id);
+  if (fr.row < 0) return { ok: false, error: 'Task not found' };
+  setCell(fr, 'status',     'resolved');
+  setCell(fr, 'resolvedBy', u.username);
+  setCell(fr, 'resolvedAt', Date.now());
+  return { ok: true };
+}
+
+/** Get cross-dept tasks incoming to a dept, or all for a project */
+function getCrossDeptTasks(token, toDept, projectId, statusFilter) {
+  var u = authUser(token);
+  if (!u) return { ok: false, error: 'Session expired' };
+  var rows = sheetRows(SN.CDTASKS).filter(function(r){ return String(r.active||'true') !== 'false'; });
+  if (toDept)      rows = rows.filter(function(r){ return r.toDept === toDept; });
+  if (projectId)   rows = rows.filter(function(r){ return r.projectId === projectId; });
+  if (statusFilter)rows = rows.filter(function(r){ return r.status === statusFilter; });
+  rows.sort(function(a,b){ return Number(b.timestamp) - Number(a.timestamp); });
+  return { ok: true, data: rows };
+}
+
+/** Dashboard-level: all active projects with summary stats (for the monitoring panel) */
+function getProjectMonitor(token) {
+  var u = authUser(token);
+  if (!u) return { ok: false, error: 'Session expired' };
+
+  var projects = sheetRows(SN.PROJECTS).filter(function(r){ return String(r.active||'true') !== 'false'; });
+  var allLogs  = sheetRows(SN.DEPTLOGS).filter(function(r){ return String(r.active||'true') !== 'false'; });
+  var tasks    = sheetRows(SN.CDTASKS).filter(function(r){
+    return String(r.active||'true') !== 'false' && r.status === 'open';
+  });
+
+  var now = Date.now();
+  var weekMs = 7 * 24 * 60 * 60 * 1000;
+
+  var summary = projects.map(function(p) {
+    var logs = allLogs.filter(function(r){ return r.project === p.name; });
+    // Departments active on this project
+    var depts = {};
+    logs.forEach(function(r){ if (r.department) depts[r.department] = true; });
+    // Most recent log
+    var sorted = logs.slice().sort(function(a,b){ return Number(b.timestamp)-Number(a.timestamp); });
+    var lastLog = sorted[0] || null;
+    var lastActive = lastLog ? Number(lastLog.timestamp) : 0;
+    var daysSince  = lastActive ? Math.floor((now - lastActive) / 86400000) : null;
+    // Open tasks for this project
+    var openTasks = tasks.filter(function(t){ return t.projectId === p.id; }).length;
+    // Recent activity flag
+    var recentActivity = lastActive > (now - weekMs);
+    return {
+      id:            p.id,
+      name:          p.name,
+      licenceNo:     p.licenceNo,
+      site:          p.site,
+      minerals:      p.minerals,
+      status:        p.status,
+      leadDept:      p.leadDept,
+      deptCount:     Object.keys(depts).length,
+      depts:         Object.keys(depts),
+      logCount:      logs.length,
+      lastActive:    lastActive,
+      daysSince:     daysSince,
+      openTasks:     openTasks,
+      recentActivity:recentActivity
+    };
+  });
+
+  // Sort: active projects with recent activity first
+  summary.sort(function(a,b){
+    if (a.status==='active' && b.status!=='active') return -1;
+    if (b.status==='active' && a.status!=='active') return 1;
+    return (b.lastActive||0) - (a.lastActive||0);
+  });
+
+  return {
+    ok:       true,
+    projects: summary,
+    openTaskCount: tasks.length
+  };
+}
+
+// Name of the Drive folder where all uploads are stored
+var DRIVE_FOLDER_NAME = 'DRGL Field Ops Uploads';
+
+/**
+ * Get (or create) the shared DRGL uploads Drive folder.
+ * Returns a DriveApp Folder object.
+ */
+function getDriveUploadFolder() {
+  var folders = DriveApp.getFoldersByName(DRIVE_FOLDER_NAME);
+  if (folders.hasNext()) return folders.next();
+  return DriveApp.createFolder(DRIVE_FOLDER_NAME);
+}
+
+/**
+ * uploadFileToDrive(token, fileName, mimeType, base64Data, meta)
+ *   meta: { context, contextId, dept, site }
+ * Decodes base64Data, creates a file in the DRGL folder, and records the
+ * upload in the Uploads sheet.  Returns { ok, fileId, viewUrl, downloadUrl, id }.
+ *
+ * Google Apps Script max request payload is ~50 MB (base64 inflates ~33 %).
+ * In practice files should be kept under 30 MB (source).
+ */
+function uploadFileToDrive(token, fileName, mimeType, base64Data, meta) {
+  var u = authUser(token);
+  if (!u) return { ok: false, error: 'Session expired' };
+  if (!fileName || !mimeType || !base64Data) return { ok: false, error: 'Missing file data' };
+  meta = meta || {};
+  try {
+    // Strip data-URL prefix if present (e.g. "data:application/pdf;base64,")
+    var b64 = base64Data.indexOf(',') > -1 ? base64Data.split(',')[1] : base64Data;
+    var bytes = Utilities.base64Decode(b64);
+    var blob  = Utilities.newBlob(bytes, mimeType, fileName);
+    var folder = getDriveUploadFolder();
+    var file   = folder.createFile(blob);
+    // Make the file viewable by anyone with the link
+    file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
+    var fileId      = file.getId();
+    var viewUrl     = 'https://drive.google.com/file/d/' + fileId + '/view';
+    var downloadUrl = 'https://drive.google.com/uc?export=download&id=' + fileId;
+    var rec = {
+      id:             uid(),
+      context:        meta.context    || 'report',
+      contextId:      meta.contextId  || '',
+      dept:           meta.dept       || '',
+      site:           meta.site       || u.site || '',
+      fileName:       fileName,
+      mimeType:       mimeType,
+      driveFileId:    fileId,
+      driveViewUrl:   viewUrl,
+      size:           bytes.length,
+      uploadedBy:     u.username,
+      uploadedByName: u.name,
+      timestamp:      Date.now(),
+      active:         'true'
+    };
+    appendRow(SN.UPLOADS, HDR.Uploads, rec);
+    return { ok: true, id: rec.id, fileId: fileId, viewUrl: viewUrl, downloadUrl: downloadUrl, fileName: fileName, mimeType: mimeType };
+  } catch(e) {
+    return { ok: false, error: e.message };
+  }
+}
+
+/**
+ * getUploads(token, context, contextId, dept, siteFilter)
+ * Returns upload records, filtered by context/contextId or dept.
+ */
+function getUploads(token, context, contextId, dept, siteFilter) {
+  var u = authUser(token);
+  if (!u) return { ok: false, error: 'Session expired' };
+  var rows = sheetRows(SN.UPLOADS).filter(function(r){ return String(r.active||'true') !== 'false'; });
+  if (context)   rows = rows.filter(function(r){ return r.context === context; });
+  if (contextId) rows = rows.filter(function(r){ return String(r.contextId) === String(contextId); });
+  if (dept)      rows = rows.filter(function(r){ return r.dept === dept; });
+  if (!isPrivileged(u)) rows = rows.filter(function(r){ return r.site === u.site; });
+  else if (siteFilter)  rows = rows.filter(function(r){ return r.site === siteFilter; });
+  rows.sort(function(a,b){ return Number(b.timestamp) - Number(a.timestamp); });
+  return { ok: true, data: rows };
+}
+
+/**
+ * deleteUpload(token, id)
+ * Soft-deletes an upload record (does NOT delete from Drive — keeps a shared link working).
+ */
+function deleteUpload(token, id) {
+  var u = authUser(token);
+  if (!u) return { ok: false, error: 'Session expired' };
+  var fr = findRow(SN.UPLOADS, 'id', id);
+  if (fr.row < 0) return { ok: false, error: 'Not found' };
+  // Only owner or admin may delete
+  var ownIdx = fr.hdrs.indexOf('uploadedBy');
+  var owner  = ownIdx >= 0 ? String(fr.sh.getRange(fr.row, ownIdx+1).getValue()||'') : '';
+  if (!isPrivileged(u) && owner !== u.username) return { ok: false, error: 'Not authorised' };
+  setCell(fr, 'active', 'false');
+  return { ok: true };
+}
+
+// ═══════════════════════════════════════════════════════════════════
+//  FIELD-TO-REPORT PIPELINE  (A → E)
+// ═══════════════════════════════════════════════════════════════════
+
+// ── A. FIELD SUBMISSION FUNCTIONS ────────────────────────────────
+
+/**
+ * submitFieldObservation(token, data)
+ * Field crew submits a geology observation (Right-Hand Rule).
+ * data: { projectId, projectName, site, date, gpsLat, gpsLon, elevation,
+ *         formation, rockUnit, lithology, colour, texture, grain,
+ *         structure, structureType, strikeRHR, dip, dipDirection,
+ *         alteration, mineralisationType, mineralisationIntensity,
+ *         sampleIds, assayNotes, remarks, photoUrls, sketchUrl }
+ */
+function submitFieldObservation(token, data) {
+  try {
+    var u = authUser(token);
+    if (!u) return { ok: false, error: 'Session expired' };
+    var rec = {};
+    HDR.FieldGeology.forEach(function(h){ rec[h] = data[h] != null ? data[h] : ''; });
+    rec.id              = uid();
+    rec.submittedBy     = u.username;
+    rec.submittedByName = u.name;
+    rec.status          = 'received';
+    rec.timestamp       = Date.now();
+    rec.active          = 'true';
+    appendRow(SN.FGEO, HDR.FieldGeology, rec);
+    return { ok: true, id: rec.id };
+  } catch(e) { return { ok: false, error: e.message }; }
+}
+
+/**
+ * submitFieldGeophysics(token, data)
+ * Field crew submits a geophysics record.
+ */
+function submitFieldGeophysics(token, data) {
+  try {
+    var u = authUser(token);
+    if (!u) return { ok: false, error: 'Session expired' };
+    var rec = {};
+    HDR.FieldGeophysics.forEach(function(h){ rec[h] = data[h] != null ? data[h] : ''; });
+    rec.id              = uid();
+    rec.submittedBy     = u.username;
+    rec.submittedByName = u.name;
+    rec.status          = 'received';
+    rec.timestamp       = Date.now();
+    rec.active          = 'true';
+    appendRow(SN.FGPHY, HDR.FieldGeophysics, rec);
+    return { ok: true, id: rec.id };
+  } catch(e) { return { ok: false, error: e.message }; }
+}
+
+/**
+ * submitFieldGeochem(token, data)
+ * Field crew submits a geochemistry sample record.
+ */
+function submitFieldGeochem(token, data) {
+  try {
+    var u = authUser(token);
+    if (!u) return { ok: false, error: 'Session expired' };
+    var rec = {};
+    HDR.FieldGeochem.forEach(function(h){ rec[h] = data[h] != null ? data[h] : ''; });
+    rec.id              = uid();
+    rec.submittedBy     = u.username;
+    rec.submittedByName = u.name;
+    rec.status          = 'received';
+    rec.timestamp       = Date.now();
+    rec.active          = 'true';
+    appendRow(SN.FGCHEM, HDR.FieldGeochem, rec);
+    return { ok: true, id: rec.id };
+  } catch(e) { return { ok: false, error: e.message }; }
+}
+
+/**
+ * submitFieldDrilling(token, data)
+ * Field crew submits a drilling interval record.
+ */
+function submitFieldDrilling(token, data) {
+  try {
+    var u = authUser(token);
+    if (!u) return { ok: false, error: 'Session expired' };
+    var rec = {};
+    HDR.FieldDrilling.forEach(function(h){ rec[h] = data[h] != null ? data[h] : ''; });
+    rec.id              = uid();
+    rec.submittedBy     = u.username;
+    rec.submittedByName = u.name;
+    rec.status          = 'received';
+    rec.timestamp       = Date.now();
+    rec.active          = 'true';
+    appendRow(SN.FDRILL, HDR.FieldDrilling, rec);
+    return { ok: true, id: rec.id };
+  } catch(e) { return { ok: false, error: e.message }; }
+}
+
+// ── B. FIELD DATA VIEWER (office side) ───────────────────────────
+
+/**
+ * getFieldSubmissions(token, dept, projectId, site, dateFrom, dateTo)
+ * Returns all active field submissions for the given dept.
+ * dept: 'geology'|'geophysics'|'geochem'|'drilling'
+ * Admins see all sites; field users see only their site.
+ */
+function getFieldSubmissions(token, dept, projectId, site, dateFrom, dateTo) {
+  try {
+    var u = authUser(token);
+    if (!u) return { ok: false, error: 'Session expired' };
+
+    var sheetMap = {
+      geology:    SN.FGEO,
+      geophysics: SN.FGPHY,
+      geochem:    SN.FGCHEM,
+      drilling:   SN.FDRILL
+    };
+    var shName = sheetMap[dept];
+    if (!shName) return { ok: false, error: 'Unknown dept: ' + dept };
+
+    var rows = sheetRows(shName).filter(function(r){ return String(r.active||'true') !== 'false'; });
+
+    if (projectId) rows = rows.filter(function(r){ return String(r.projectId) === String(projectId); });
+    if (!isPrivileged(u)) rows = rows.filter(function(r){ return r.site === u.site; });
+    else if (site) rows = rows.filter(function(r){ return r.site === site; });
+
+    if (dateFrom) {
+      var dfTs = new Date(dateFrom).getTime();
+      rows = rows.filter(function(r){ return Number(r.timestamp) >= dfTs; });
+    }
+    if (dateTo) {
+      var dtTs = new Date(dateTo).getTime() + 86400000; // inclusive
+      rows = rows.filter(function(r){ return Number(r.timestamp) <= dtTs; });
+    }
+
+    rows.sort(function(a,b){ return Number(b.timestamp) - Number(a.timestamp); });
+    return { ok: true, data: rows, dept: dept };
+  } catch(e) { return { ok: false, error: e.message }; }
+}
+
+/**
+ * updateFieldSubmissionStatus(token, dept, id, status)
+ * Office lead marks a submission: received / processing / used
+ */
+function updateFieldSubmissionStatus(token, dept, id, newStatus) {
+  try {
+    var u = authUser(token);
+    if (!u) return { ok: false, error: 'Session expired' };
+    if (!isPrivileged(u)) return { ok: false, error: 'Not authorised' };
+    var sheetMap = { geology: SN.FGEO, geophysics: SN.FGPHY, geochem: SN.FGCHEM, drilling: SN.FDRILL };
+    var shName = sheetMap[dept];
+    if (!shName) return { ok: false, error: 'Unknown dept' };
+    var fr = findRow(shName, 'id', id);
+    if (fr.row < 0) return { ok: false, error: 'Record not found' };
+    setCell(fr, 'status', newStatus);
+    return { ok: true };
+  } catch(e) { return { ok: false, error: e.message }; }
+}
+
+// ── C. DATA REQUESTS (HQ → field) ────────────────────────────────
+
+/**
+ * createDataRequest(token, data)
+ * Office lead creates a data request.
+ * data: { projectId, projectName, site, requestedDept, title, description,
+ *         dataType, urgency, dueDate }
+ */
+function createDataRequest(token, data) {
+  try {
+    var u = authUser(token);
+    if (!u) return { ok: false, error: 'Session expired' };
+    if (!isPrivileged(u)) return { ok: false, error: 'Only admin/leads can raise requests' };
+    var rec = {
+      id:              uid(),
+      projectId:       data.projectId       || '',
+      projectName:     data.projectName     || '',
+      site:            data.site            || '',
+      requestedDept:   data.requestedDept   || '',
+      title:           data.title           || '',
+      description:     data.description     || '',
+      dataType:        data.dataType        || '',
+      urgency:         data.urgency         || 'normal',
+      requestedBy:     u.username,
+      requestedByName: u.name,
+      dueDate:         data.dueDate         || '',
+      status:          'open',
+      fulfilledBy:     '',
+      fulfilledAt:     '',
+      fulfilledRecordId: '',
+      timestamp:       Date.now(),
+      active:          'true'
+    };
+    appendRow(SN.DREQS, HDR.DataRequests, rec);
+    return { ok: true, id: rec.id };
+  } catch(e) { return { ok: false, error: e.message }; }
+}
+
+/**
+ * getDataRequests(token, dept, site, status)
+ * Returns data requests. Field users see requests for their dept/site.
+ * status: 'open'|'fulfilled'|'cancelled'|'' (all)
+ */
+function getDataRequests(token, dept, site, status) {
+  try {
+    var u = authUser(token);
+    if (!u) return { ok: false, error: 'Session expired' };
+    var rows = sheetRows(SN.DREQS).filter(function(r){ return String(r.active||'true') !== 'false'; });
+    if (dept)   rows = rows.filter(function(r){ return r.requestedDept === dept; });
+    if (status) rows = rows.filter(function(r){ return r.status === status; });
+    if (!isPrivileged(u)) {
+      rows = rows.filter(function(r){ return r.site === u.site; });
+    } else if (site) {
+      rows = rows.filter(function(r){ return r.site === site; });
+    }
+    rows.sort(function(a,b){
+      var urgOrder = { critical: 0, urgent: 1, normal: 2 };
+      var uA = urgOrder[a.urgency] != null ? urgOrder[a.urgency] : 2;
+      var uB = urgOrder[b.urgency] != null ? urgOrder[b.urgency] : 2;
+      if (uA !== uB) return uA - uB;
+      return Number(b.timestamp) - Number(a.timestamp);
+    });
+    return { ok: true, data: rows };
+  } catch(e) { return { ok: false, error: e.message }; }
+}
+
+/**
+ * fulfillDataRequest(token, requestId, fulfilledRecordId)
+ * Field crew marks a request as fulfilled and links the record they submitted.
+ */
+function fulfillDataRequest(token, requestId, fulfilledRecordId) {
+  try {
+    var u = authUser(token);
+    if (!u) return { ok: false, error: 'Session expired' };
+    var fr = findRow(SN.DREQS, 'id', requestId);
+    if (fr.row < 0) return { ok: false, error: 'Request not found' };
+    setCell(fr, 'status',           'fulfilled');
+    setCell(fr, 'fulfilledBy',      u.username);
+    setCell(fr, 'fulfilledAt',      Date.now());
+    setCell(fr, 'fulfilledRecordId', fulfilledRecordId || '');
+    return { ok: true };
+  } catch(e) { return { ok: false, error: e.message }; }
+}
+
+/**
+ * cancelDataRequest(token, requestId)
+ * Admin cancels a data request.
+ */
+function cancelDataRequest(token, requestId) {
+  try {
+    var u = authUser(token);
+    if (!u) return { ok: false, error: 'Session expired' };
+    if (!isPrivileged(u)) return { ok: false, error: 'Not authorised' };
+    var fr = findRow(SN.DREQS, 'id', requestId);
+    if (fr.row < 0) return { ok: false, error: 'Not found' };
+    setCell(fr, 'status', 'cancelled');
+    return { ok: true };
+  } catch(e) { return { ok: false, error: e.message }; }
+}
+
+// ── D. PROCESSED OUTPUTS (office uploads maps/reports) ───────────
+
+/**
+ * submitProcessedOutput(token, data)
+ * Office dept lead uploads a processed map / report against a project.
+ * data: { projectId, projectName, site, dept, outputType, title, description,
+ *         version, versionTag, fileUrl, driveFileId, fileName, mimeType,
+ *         fileSize, isFinalReport }
+ */
+function submitProcessedOutput(token, data) {
+  try {
+    var u = authUser(token);
+    if (!u) return { ok: false, error: 'Session expired' };
+    if (!isPrivileged(u)) return { ok: false, error: 'Only dept leads / admin can upload outputs' };
+    var rec = {
+      id:             uid(),
+      projectId:      data.projectId      || '',
+      projectName:    data.projectName    || '',
+      site:           data.site           || '',
+      dept:           data.dept           || '',
+      outputType:     data.outputType     || 'report',
+      title:          data.title          || '',
+      description:    data.description    || '',
+      version:        data.version        || 'v1',
+      versionTag:     data.versionTag     || 'draft',
+      fileUrl:        data.fileUrl        || '',
+      driveFileId:    data.driveFileId    || '',
+      fileName:       data.fileName       || '',
+      mimeType:       data.mimeType       || '',
+      fileSize:       data.fileSize       || '',
+      producedBy:     u.username,
+      producedByName: u.name,
+      isFinalReport:  data.isFinalReport  ? 'true' : 'false',
+      timestamp:      Date.now(),
+      active:         'true'
+    };
+    appendRow(SN.POUTS, HDR.ProcessedOutputs, rec);
+    return { ok: true, id: rec.id };
+  } catch(e) { return { ok: false, error: e.message }; }
+}
+
+/**
+ * getProcessedOutputs(token, projectId, dept, siteFilter)
+ * Returns processed outputs, newest first.
+ */
+function getProcessedOutputs(token, projectId, dept, siteFilter) {
+  try {
+    var u = authUser(token);
+    if (!u) return { ok: false, error: 'Session expired' };
+    var rows = sheetRows(SN.POUTS).filter(function(r){ return String(r.active||'true') !== 'false'; });
+    if (projectId)  rows = rows.filter(function(r){ return String(r.projectId) === String(projectId); });
+    if (dept)       rows = rows.filter(function(r){ return r.dept === dept; });
+    if (!isPrivileged(u)) rows = rows.filter(function(r){ return r.site === u.site; });
+    else if (siteFilter) rows = rows.filter(function(r){ return r.site === siteFilter; });
+    rows.sort(function(a,b){ return Number(b.timestamp) - Number(a.timestamp); });
+    return { ok: true, data: rows };
+  } catch(e) { return { ok: false, error: e.message }; }
+}
+
+// ── E. PROJECT ARCHIVE ────────────────────────────────────────────
+
+/**
+ * getProjectArchive(token, projectId)
+ * Returns the full audit trail for a project:
+ *   fieldData: { geology:[], geophysics:[], geochem:[], drilling:[] }
+ *   outputs:   []  (processed outputs, newest first)
+ *   finalReport: {} or null
+ *   dataRequests: []
+ *   summary: { totalFieldRecords, totalOutputs, openRequests, deptsCovered }
+ */
+function getProjectArchive(token, projectId) {
+  try {
+    var u = authUser(token);
+    if (!u) return { ok: false, error: 'Session expired' };
+    if (!projectId) return { ok: false, error: 'projectId required' };
+
+    var pid = String(projectId);
+
+    function byProject(rows) {
+      return rows.filter(function(r){ return String(r.projectId) === pid && String(r.active||'true') !== 'false'; });
+    }
+
+    var geo   = byProject(sheetRows(SN.FGEO));
+    var gphy  = byProject(sheetRows(SN.FGPHY));
+    var gchem = byProject(sheetRows(SN.FGCHEM));
+    var drill = byProject(sheetRows(SN.FDRILL));
+    var outs  = byProject(sheetRows(SN.POUTS));
+    var dreqs = byProject(sheetRows(SN.DREQS));
+
+    // Sort all by timestamp desc
+    [geo, gphy, gchem, drill, outs, dreqs].forEach(function(arr){
+      arr.sort(function(a,b){ return Number(b.timestamp) - Number(a.timestamp); });
+    });
+
+    var finalReport = null;
+    outs.forEach(function(o){ if (String(o.isFinalReport) === 'true' && !finalReport) finalReport = o; });
+
+    var totalField = geo.length + gphy.length + gchem.length + drill.length;
+    var deptsCovered = [];
+    if (geo.length)   deptsCovered.push('Geology');
+    if (gphy.length)  deptsCovered.push('Geophysics');
+    if (gchem.length) deptsCovered.push('Geochemistry');
+    if (drill.length) deptsCovered.push('Drilling');
+
+    var openReqs = dreqs.filter(function(r){ return r.status === 'open'; }).length;
+
+    return {
+      ok: true,
+      fieldData: { geology: geo, geophysics: gphy, geochem: gchem, drilling: drill },
+      outputs:   outs,
+      finalReport: finalReport,
+      dataRequests: dreqs,
+      summary: {
+        totalFieldRecords: totalField,
+        totalOutputs:      outs.length,
+        openRequests:      openReqs,
+        deptsCovered:      deptsCovered
+      }
+    };
+  } catch(e) { return { ok: false, error: e.message }; }
+}
+
+// Manual test
+function testLogin() {
+  Logger.log(JSON.stringify(login('admin', 'admin123')));
+}
+function testSetup() {
+  setupSheets();
+  Logger.log('Setup done');
+}
