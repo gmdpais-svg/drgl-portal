@@ -1029,9 +1029,10 @@ function gscript(fnName) {
 //
 //  For the common pattern:
 //    gscript('fn', a,b)
-      .withSuccessHandler(cb)
-      .withFailureHandler(e)
-      .call()//  becomes:
+//      .withSuccessHandler(cb)
+//      .withFailureHandler(e)
+//      .call()
+//  becomes:
 //    gscript('fn', a, b).withSuccessHandler(cb).withFailureHandler(e).call()
 // ═══════════════════════════════════════════════════════════════════
 var SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbyBgT5sPUFwLf1lnwHPcqLUdpAw3i4xol4jJUEg0GeVnNwtJI-xa1EmtbZqEzC9VUm1/exec';
