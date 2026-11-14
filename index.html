@@ -991,6 +991,78 @@ table.lab-t th.fh { border-left: 1px solid var(--border2); }
 <div class="toast" id="toast"></div>
 
 <script>
+// ═══════════════════════════════════════════════════════════════════
+//  GitHub-compatible backend bridge  (replaces google.script.run)
+// ═══════════════════════════════════════════════════════════════════
+var SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbyBgT5sPUFwLf1lnwHPcqLUdpAw3i4xol4jJUEg0GeVnNwtJI-xa1EmtbZqEzC9VUm1/exec';
+function gscript(fnName) {
+  var args = Array.prototype.slice.call(arguments, 1);
+  var _ok  = function(r){ return r; };
+  var _err = function(e){ console.error('gscript error:', e); };
+  var obj = {
+    withSuccessHandler: function(fn){ _ok = fn; return obj; },
+    withFailureHandler: function(fn){ _err = fn; return obj; },
+    withUserObject:     function(){   return obj; },
+    call: function() {
+      fetch(SCRIPT_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+        body: JSON.stringify({ fn: fnName, args: args })
+      })
+      .then(function(r){ return r.json(); })
+      .then(function(d){ if (d && d.__error) _err(new Error(d.__error)); else _ok(d); })
+      .catch(_err);
+    }
+  };
+  return obj;
+}
+
+// ═══════════════════════════════════════════════════════════════════
+//  GitHub-compatible backend bridge
+//  Replaces google.script.run with fetch() calls to the Apps Script
+//  deployment URL.  Usage is identical to google.script.run:
+//
+//    gscript('functionName', arg1, arg2)
+//      .withSuccessHandler(cb)
+//      .withFailureHandler(errCb)
+//      .call()
+//
+//  For the common pattern:
+//    gscript('fn', a,b)
+      .withSuccessHandler(cb)
+      .withFailureHandler(e)
+      .call()//  becomes:
+//    gscript('fn', a, b).withSuccessHandler(cb).withFailureHandler(e).call()
+// ═══════════════════════════════════════════════════════════════════
+var SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbyBgT5sPUFwLf1lnwHPcqLUdpAw3i4xol4jJUEg0GeVnNwtJI-xa1EmtbZqEzC9VUm1/exec';
+
+function gscript(fnName /*, ...args */) {
+  var args = Array.prototype.slice.call(arguments, 1);
+  var _ok  = function(r){ return r; };
+  var _err = function(e){ console.error('gscript error:', e); };
+  var obj = {
+    withSuccessHandler: function(fn){ _ok = fn; return obj; },
+    withFailureHandler: function(fn){ _err = fn; return obj; },
+    withUserObject: function(){ return obj; },
+    call: function() {
+      var body = JSON.stringify({ fn: fnName, args: args });
+      fetch(SCRIPT_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+        body: body
+      })
+      .then(function(r){ return r.json(); })
+      .then(function(d){
+        if (d && d.__error) { _err(new Error(d.__error)); }
+        else { _ok(d); }
+      })
+      .catch(function(e){ _err(e); });
+      return obj;
+    }
+  };
+  return obj;
+}
+
 // \u2500\u2500 STATE \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
 var SESSION      = null;
 var SITES        = [];
@@ -1008,8 +1080,8 @@ var _FIELD_SYNC_TIMERS = {};  // containerId \u2192 intervalId; cleared when use
 function tryRevalidateAndRetry(retryFn, showExpiredFn) {
   var token = SESSION && SESSION.token;
   if (!token) { showExpiredFn(); return; }
-  google.script.run
-    .withSuccessHandler(function(res) {
+  gscript('validateSession', token)
+      .withSuccessHandler(function(res) {
       if (res && res.ok) {
         // Token still valid \u2014 update SESSION and retry the data call
         SESSION.token = res.token || SESSION.token;
@@ -1019,8 +1091,8 @@ function tryRevalidateAndRetry(retryFn, showExpiredFn) {
         showExpiredFn();
       }
     })
-    .withFailureHandler(function() { showExpiredFn(); })
-    .validateSession(token);
+      .withFailureHandler(function() { showExpiredFn(); })
+      .call();
 }
 var RESPONSIBILITIES = [
   'Geology','Drilling','Geochemistry','Geophysics','Geoinformatics',
@@ -1160,8 +1232,8 @@ function doLogin() {
   if (!u || !p) { err.textContent='Enter username and password'; err.style.display='block'; return; }
   btn.disabled = true; btn.textContent = 'Signing in\u2026';
   sp.className = 'lspin show';
-  google.script.run
-    .withSuccessHandler(function(res) {
+  gscript('login', u, p)
+      .withSuccessHandler(function(res) {
       console.log('[DRGL] login response:', JSON.stringify(res ? {ok:res.ok, error:res.error, role:res.role, username:res.username, tokenPrefix: res.token ? res.token.slice(0,12)+'...' : 'NONE'} : null));
       sp.className = 'lspin';
       if (!res || !res.ok) {
@@ -1181,13 +1253,13 @@ function doLogin() {
       renderSidebar();
       loadSites(function(){ nav('dashboard'); });
     })
-    .withFailureHandler(function(e) {
+      .withFailureHandler(function(e) {
       console.log('[DRGL] login FAILURE:', e && e.message);
       sp.className = 'lspin';
       err.textContent = e.message || 'Connection error'; err.style.display='block';
       btn.disabled=false; btn.textContent='Sign In \u2192';
     })
-    .login(u, p);
+      .call();
 }
 
 
@@ -1213,7 +1285,8 @@ function closeSidebar() {
 }
 
 function doLogout() {
-  google.script.run.logout(SESSION ? SESSION.token : '');
+  gscript('logout', SESSION ? SESSION.token : '')
+      .call();
   SESSION = null; SITES = [];
   try { localStorage.removeItem('drgl_session'); } catch(e){}
   document.getElementById('app').className = '';
@@ -1257,8 +1330,8 @@ function submitChangePw() {
   if (np !== conf)   { errEl.textContent = 'New passwords do not match.'; errEl.style.display='block'; return; }
   btn.disabled = true;
   btn.textContent = 'Updating\u2026';
-  google.script.run
-    .withSuccessHandler(function(res) {
+  gscript('changePassword', SESSION.token, cur, np)
+      .withSuccessHandler(function(res) {
       btn.disabled = false;
       btn.textContent = 'Update Password';
       if (res && res.ok) {
@@ -1272,13 +1345,13 @@ function submitChangePw() {
         errEl.style.display = 'block';
       }
     })
-    .withFailureHandler(function(e) {
+      .withFailureHandler(function(e) {
       btn.disabled = false;
       btn.textContent = 'Update Password';
       errEl.textContent = 'Error: ' + (e && e.message ? e.message : 'Server error');
       errEl.style.display = 'block';
     })
-    .changePassword(SESSION.token, cur, np);
+      .call();
 }
 
 // \u2500\u2500 SIDEBAR \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
@@ -1479,20 +1552,20 @@ function renderTaskBoard() {
   var done = 0;
   function check() { done++; if (done >= 3) tbRenderCurrent(); }
 
-  google.script.run
-    .withSuccessHandler(function(r){ if (r && r.ok) TB.myTasks = r.tasks || []; check(); })
-    .withFailureHandler(function(){ check(); })
-    .getMyTasks(SESSION.token);
+  gscript('getMyTasks', SESSION.token)
+      .withSuccessHandler(function(r){ if (r && r.ok) TB.myTasks = r.tasks || []; check(); })
+      .withFailureHandler(function(){ check(); })
+      .call();
 
-  google.script.run
-    .withSuccessHandler(function(r){ if (r && r.ok) TB.allTasks = r.tasks || []; check(); })
-    .withFailureHandler(function(){ check(); })
-    .getAllTasks(SESSION.token);
+  gscript('getAllTasks', SESSION.token)
+      .withSuccessHandler(function(r){ if (r && r.ok) TB.allTasks = r.tasks || []; check(); })
+      .withFailureHandler(function(){ check(); })
+      .call();
 
-  google.script.run
-    .withSuccessHandler(function(r){ if (r && r.ok) TB.staff = r.staff || []; check(); })
-    .withFailureHandler(function(){ check(); })
-    .getStaffList(SESSION.token);
+  gscript('getStaffList', SESSION.token)
+      .withSuccessHandler(function(r){ if (r && r.ok) TB.staff = r.staff || []; check(); })
+      .withFailureHandler(function(){ check(); })
+      .call();
 }
 
 function tbSwitchTab(t) {
@@ -1602,8 +1675,8 @@ function tbEscape(s) {
 }
 
 function tbUpdateStatus(taskId, newStatus, notes) {
-  google.script.run
-    .withSuccessHandler(function(r){
+  gscript('updateTaskStatus', SESSION.token, taskId, newStatus, notes || '')
+      .withSuccessHandler(function(r){
       if (r && r.ok) {
         [TB.myTasks, TB.allTasks].forEach(function(arr){
           arr.forEach(function(t){ if (t.id === taskId) { t.status = newStatus; if (notes) t.notes = notes; } });
@@ -1614,8 +1687,8 @@ function tbUpdateStatus(taskId, newStatus, notes) {
         alert((r && r.error) || 'Could not update task');
       }
     })
-    .withFailureHandler(function(e){ alert('Error: ' + e.message); })
-    .updateTaskStatus(SESSION.token, taskId, newStatus, notes || '');
+      .withFailureHandler(function(e){ alert('Error: ' + e.message); })
+      .call();
 }
 
 function tbMarkDone(taskId) {
@@ -1625,8 +1698,8 @@ function tbMarkDone(taskId) {
 
 function tbCancelTask(taskId) {
   if (!confirm('Cancel this task?')) return;
-  google.script.run
-    .withSuccessHandler(function(r){
+  gscript('cancelTask', SESSION.token, taskId)
+      .withSuccessHandler(function(r){
       if (r && r.ok) {
         TB.allTasks = TB.allTasks.filter(function(t){ return t.id !== taskId; });
         TB.myTasks  = TB.myTasks.filter(function(t){ return t.id !== taskId; });
@@ -1636,8 +1709,8 @@ function tbCancelTask(taskId) {
         alert((r && r.error) || 'Could not cancel task');
       }
     })
-    .withFailureHandler(function(e){ alert('Error: ' + e.message); })
-    .cancelTask(SESSION.token, taskId);
+      .withFailureHandler(function(e){ alert('Error: ' + e.message); })
+      .call();
 }
 
 function tbShowAssignForm() {
@@ -1713,26 +1786,32 @@ function tbSubmitAssign() {
   var btn = document.querySelector('.tb-assign-form button');
   if (btn) { btn.disabled = true; btn.textContent = 'Assigning...'; }
 
-  google.script.run
-    .withSuccessHandler(function(r){
+  gscript('assignTask', SESSION.token, taskData)
+      .withSuccessHandler(function(r){
       if (r && r.ok) {
         document.getElementById('tb-assign-wrap').style.display = 'none';
         showToast('Task assigned successfully!');
         TB.allTasks = []; TB.myTasks = [];
         var done2 = 0;
         function check2(){ done2++; if (done2 >= 2) tbRenderCurrent(); }
-        google.script.run.withSuccessHandler(function(res){ if(res&&res.ok) TB.myTasks=res.tasks||[]; check2(); }).withFailureHandler(check2).getMyTasks(SESSION.token);
-        google.script.run.withSuccessHandler(function(res){ if(res&&res.ok) TB.allTasks=res.tasks||[]; check2(); }).withFailureHandler(check2).getAllTasks(SESSION.token);
+        gscript('getMyTasks', SESSION.token)
+      .withSuccessHandler(function(res){ if(res&&res.ok) TB.myTasks=res.tasks||[]; check2(); })
+      .withFailureHandler(check2)
+      .call();
+        gscript('getAllTasks', SESSION.token)
+      .withSuccessHandler(function(res){ if(res&&res.ok) TB.allTasks=res.tasks||[]; check2(); })
+      .withFailureHandler(check2)
+      .call();
       } else {
         if (btn) { btn.disabled = false; btn.textContent = 'Assign Task'; }
         alert((r && r.error) || 'Could not assign task');
       }
     })
-    .withFailureHandler(function(e){
+      .withFailureHandler(function(e){
       if (btn) { btn.disabled = false; btn.textContent = 'Assign Task'; }
       alert('Error: ' + e.message);
     })
-    .assignTask(SESSION.token, taskData);
+      .call();
 }
 
 
@@ -1798,18 +1877,18 @@ function pqSwitchTab(t) {
 function _pqLoad() {
   PQ.loadDone = 0; PQ.loadNeeded = 3;
   function check() { PQ.loadDone++; if (PQ.loadDone >= PQ.loadNeeded) _pqRenderCurrent(); }
-  google.script.run
-    .withSuccessHandler(function(r){ if(r&&r.ok) PQ.jobs = r.jobs||[]; check(); })
-    .withFailureHandler(check)
-    .getQueue(SESSION.token, '');
-  google.script.run
-    .withSuccessHandler(function(r){ if(r&&r.ok) { PQ.quotas=r.quotas||[]; } check(); })
-    .withFailureHandler(check)
-    .getDeptQuotas(SESSION.token);
-  google.script.run
-    .withSuccessHandler(function(r){ if(r&&r.ok) PQ.myStats=r.stats||[]; check(); })
-    .withFailureHandler(check)
-    .getMyQuotaStats(SESSION.token);
+  gscript('getQueue', SESSION.token, '')
+      .withSuccessHandler(function(r){ if(r&&r.ok) PQ.jobs = r.jobs||[]; check(); })
+      .withFailureHandler(check)
+      .call();
+  gscript('getDeptQuotas', SESSION.token)
+      .withSuccessHandler(function(r){ if(r&&r.ok) { PQ.quotas=r.quotas||[]; } check(); })
+      .withFailureHandler(check)
+      .call();
+  gscript('getMyQuotaStats', SESSION.token)
+      .withSuccessHandler(function(r){ if(r&&r.ok) PQ.myStats=r.stats||[]; check(); })
+      .withFailureHandler(check)
+      .call();
 }
 
 function _pqRenderCurrent() {
@@ -1939,8 +2018,8 @@ function _pqRenderProgress() {
   if (!isAdmin) { document.getElementById('pq-body').innerHTML = '<div style="color:#888;padding:20px">Admin access required.</div>'; return; }
   var loadEl = document.getElementById('pq-body');
   loadEl.innerHTML = '<div class="spinner-wrap"><div class="spinner"></div></div>';
-  google.script.run
-    .withSuccessHandler(function(r){
+  gscript('getDeptSummary', SESSION.token)
+      .withSuccessHandler(function(r){
       if (!r || !r.ok) { loadEl.innerHTML = '<div style="color:#888;padding:20px">Could not load progress data.</div>'; return; }
       var html = '<h3 style="margin:0 0 14px;color:#4a148c">Monthly Dept Progress &mdash; ' + (r.month||'') + '</h3>';
       (r.summary||[]).forEach(function(d){
@@ -1964,8 +2043,8 @@ function _pqRenderProgress() {
       });
       loadEl.innerHTML = html;
     })
-    .withFailureHandler(function(e){ loadEl.innerHTML = '<div style="color:#c62828;padding:20px">Error: ' + (e.message||'unknown') + '</div>'; })
-    .getDeptSummary(SESSION.token);
+      .withFailureHandler(function(e){ loadEl.innerHTML = '<div style="color:#c62828;padding:20px">Error: ' + (e.message||'unknown') + '</div>'; })
+      .call();
 }
 
 function pqSubmitJob() {
@@ -1984,8 +2063,8 @@ function pqSubmitJob() {
   var btn = document.querySelector('#pq-load-form .btn');
   if (btn) { btn.disabled = true; btn.textContent = 'Adding...'; }
   var status = document.getElementById('pq-add-status');
-  google.script.run
-    .withSuccessHandler(function(r){
+  gscript('addToQueue', SESSION.token, jobData)
+      .withSuccessHandler(function(r){
       if (btn) { btn.disabled = false; btn.textContent = 'Add to Queue'; }
       if (r && r.ok) {
         if (status) status.textContent = 'Added! (' + (r.id||'') + ')';
@@ -1999,45 +2078,45 @@ function pqSubmitJob() {
         alert((r && r.error) || 'Could not add job');
       }
     })
-    .withFailureHandler(function(e){
+      .withFailureHandler(function(e){
       if (btn) { btn.disabled = false; btn.textContent = 'Add to Queue'; }
       alert('Error: ' + e.message);
     })
-    .addToQueue(SESSION.token, jobData);
+      .call();
 }
 
 function pqClaimJob(jobId) {
   if (!confirm('Pick up this job? It will be assigned to you as In Progress.')) return;
-  google.script.run
-    .withSuccessHandler(function(r){
+  gscript('claimQueueJob', SESSION.token, jobId)
+      .withSuccessHandler(function(r){
       if (r && r.ok) { showToast('Job claimed!'); PQ.jobs=[]; PQ.myStats=[]; _pqLoad(); }
       else alert((r&&r.error)||'Could not claim job');
     })
-    .withFailureHandler(function(e){ alert('Error: '+e.message); })
-    .claimQueueJob(SESSION.token, jobId);
+      .withFailureHandler(function(e){ alert('Error: '+e.message); })
+      .call();
 }
 
 function pqCompleteJob(jobId) {
   var note = prompt('Enter your report note / completion summary:');
   if (note === null) return; // cancelled
-  google.script.run
-    .withSuccessHandler(function(r){
+  gscript('completeQueueJob', SESSION.token, jobId, note)
+      .withSuccessHandler(function(r){
       if (r && r.ok) { showToast('Job completed!'); PQ.jobs=[]; PQ.myStats=[]; _pqLoad(); }
       else alert((r&&r.error)||'Could not complete job');
     })
-    .withFailureHandler(function(e){ alert('Error: '+e.message); })
-    .completeQueueJob(SESSION.token, jobId, note);
+      .withFailureHandler(function(e){ alert('Error: '+e.message); })
+      .call();
 }
 
 function pqCancelJob(jobId) {
   if (!confirm('Cancel this job from the queue?')) return;
-  google.script.run
-    .withSuccessHandler(function(r){
+  gscript('cancelQueueJob', SESSION.token, jobId)
+      .withSuccessHandler(function(r){
       if (r && r.ok) { showToast('Job cancelled.'); PQ.jobs=[]; _pqLoad(); }
       else alert((r&&r.error)||'Could not cancel job');
     })
-    .withFailureHandler(function(e){ alert('Error: '+e.message); })
-    .cancelQueueJob(SESSION.token, jobId);
+      .withFailureHandler(function(e){ alert('Error: '+e.message); })
+      .call();
 }
 
 function _pqCard(j, isMyInProgress) {
@@ -2077,31 +2156,31 @@ function _pqEsc(s) {
 // \u2500\u2500 SITES + DEPTS CACHE \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
 function loadSites(cb) {
   if (!SESSION) { if (cb) cb(); return; }
-  google.script.run
-    .withSuccessHandler(function(res){
+  gscript('getSites', SESSION.token)
+      .withSuccessHandler(function(res){
       if (!SESSION) return; // logged out while request was in flight
       if (res && res.ok) SITES = res.data || [];
       renderSiteNav();
       // now load departments
       if (!SESSION) { if (cb) cb(); return; }
-      google.script.run
-        .withSuccessHandler(function(dr){
+      gscript('getDepartments', SESSION.token)
+      .withSuccessHandler(function(dr){
           if (!SESSION) return;
           if (dr && dr.ok) DEPTS = dr.data || [];
           renderDeptNav();
           // also pre-cache users for org map / deliverables views
           if (!SESSION) { if (cb) cb(); return; }
-          google.script.run
-            .withSuccessHandler(function(ur){ if (ur && ur.ok) USERS = ur.data || []; })
-            .withFailureHandler(function(){})
-            .getUsers(SESSION.token);
+          gscript('getUsers', SESSION.token)
+      .withSuccessHandler(function(ur){ if (ur && ur.ok) USERS = ur.data || []; })
+      .withFailureHandler(function(){})
+      .call();
           if (cb) cb();
         })
-        .withFailureHandler(function(){ renderDeptNav(); if (cb) cb(); })
-        .getDepartments(SESSION.token);
+      .withFailureHandler(function(){ renderDeptNav(); if (cb) cb(); })
+      .call();
     })
-    .withFailureHandler(function(){ if (cb) cb(); })
-    .getSites(SESSION.token);
+      .withFailureHandler(function(){ if (cb) cb(); })
+      .call();
 }
 
 function renderSiteNav() {
@@ -2138,8 +2217,7 @@ function renderDashboard(retryCount) {
   retryCount = retryCount || 0;
   document.getElementById('page-content').innerHTML = '\u003Cdiv class="empty">\u003Cdiv class="spin" style="margin:0 auto 10px">\u003C/div>Loading dashboard\u2026\u003C/div>';
   console.log('[DRGL] renderDashboard called (attempt ' + (retryCount+1) + '). SESSION.token=' + (SESSION && SESSION.token ? SESSION.token.slice(0,12)+'...' : 'MISSING'));
-  google.script.run
-    .withSuccessHandler(function(res) {
+  gscript('getDashboard', SESSION.token).withSuccessHandler(function(res) {
       console.log('[DRGL] getDashboard response:', JSON.stringify(res ? {ok:res.ok, error:res.error, hasData:!!res.totalReports} : null));
       // If null response and haven't retried yet, wait 2s and try again once
       if (!res && retryCount < 1) {
@@ -2421,7 +2499,7 @@ function renderDashboard(retryCount) {
       loadProjectMonitorPanel();
     })
     .withFailureHandler(function(e){ document.getElementById('page-content').innerHTML='\u003Cdiv class="empty">'+esc(e.message)+'\u003C/div>'; })
-    .getDashboard(SESSION.token);
+    .call();
 }
 
 /**
@@ -2437,7 +2515,7 @@ function loadProjectMonitorPanel() {
   placeholder.innerHTML = '\u003Cdiv style="text-align:center;padding:16px;color:#bbb;font-size:12px">Loading project monitor\u2026\u003C/div>';
   pc.appendChild(placeholder);
 
-  google.script.run
+  gscript('getProjectMonitor', SESSION.token)
     .withSuccessHandler(function(res) {
       var el = document.getElementById('project-monitor-panel');
       if (!el) return;
@@ -2494,7 +2572,7 @@ function loadProjectMonitorPanel() {
       el.innerHTML = html;
     })
     .withFailureHandler(function(){ var el=document.getElementById('project-monitor-panel'); if(el) el.innerHTML=''; })
-    .getProjectMonitor(SESSION.token);
+    .call();
 }
 
 // \u2500\u2500 DAILY REPORTS \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
@@ -2545,7 +2623,7 @@ function arFetchAll() {
   }
   var pending = depts.length, collected = [];
   depts.forEach(function(dept) {
-    google.script.run
+    gscript('getFieldRecords', SESSION.token, dept, '')
       .withSuccessHandler(function(records) {
         if (records && records.length) {
           records.forEach(function(r){ r._dept = dept; });
@@ -2563,7 +2641,7 @@ function arFetchAll() {
         pending--;
         if (pending === 0) { _AR.rows = collected; arBuildFilterOptions(); arApplyFilters(); }
       })
-      .getFieldRecords(SESSION.token, dept, '');
+      .call();
   });
 }
 
@@ -2730,7 +2808,7 @@ function renderReports(siteFilter) {
   if (!SESSION) return;
   var isAdmin = canAdmin();
   console.log('[DRGL-DEBUG] SESSION:', SESSION ? {role:SESSION.role, site:SESSION.site, hasToken:!!SESSION.token, tokenLen:SESSION.token?SESSION.token.length:0} : 'NULL');
-  google.script.run
+  gscript('getReports', SESSION.token, siteFilter||'')
     .withSuccessHandler(function(res) {
       console.log('[DRGL-DEBUG] getReports res:', JSON.stringify(res ? {ok:res.ok, error:res.error, count:res.data?res.data.length:'nodata'} : null));
       var html = '<div class="ledger-toolbar">';
@@ -2799,7 +2877,7 @@ function renderReports(siteFilter) {
       document.getElementById('page-content').innerHTML = html;
     })
     .withFailureHandler(function(e){ document.getElementById('page-content').innerHTML='<div class="empty">'+esc(e.message)+'</div>'; })
-    .getReports(SESSION.token, siteFilter||'');
+    .call();
 }
 
 function viewDailyReport(r) {
@@ -2873,10 +2951,10 @@ function _autoVault(module, category, subCategory, title, description, meta) {
       sampleId:    (meta && meta.sampleId)    || '',
       formation:   (meta && meta.formation)   || ''
     };
-    google.script.run
+    gscript('addVaultRecord', SESSION.token, payload)
       .withSuccessHandler(function(){})
       .withFailureHandler(function(){})
-      .addVaultRecord(SESSION.token, payload);
+      .call();
   } catch(e) { /* silent – vault is best-effort */ }
 }
 
@@ -2893,7 +2971,7 @@ function submitReport() {
   };
   if (!data.activity.trim()) { showToast('Activity summary is required', true); return; }
   closeModal();
-  google.script.run
+  gscript('addReport', SESSION.token, data)
     .withSuccessHandler(function(res){
       if (res && res.ok) {
         showToast('Report submitted \u2713');
@@ -2906,18 +2984,18 @@ function submitReport() {
       else showToast((res&&res.error)||'Failed', true);
     })
     .withFailureHandler(function(e){ showToast(e.message, true); })
-    .addReport(SESSION.token, data);
+    .call();
 }
 
 function deleteReport(id) {
   if (!confirm('Delete this report?')) return;
-  google.script.run
+  gscript('deleteReport', SESSION.token, id)
     .withSuccessHandler(function(res){
       if (res&&res.ok) { showToast('Deleted'); renderReports(); }
       else showToast((res&&res.error)||'Failed', true);
     })
     .withFailureHandler(function(e){ showToast(e.message, true); })
-    .deleteReport(SESSION.token, id);
+    .call();
 }
 
 // \u2500\u2500 COMPLAINTS \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
@@ -2925,7 +3003,7 @@ function renderComplaints(siteFilter) {
   if (!SESSION) return;
   var isAdmin = canAdmin();
   console.log('[DRGL-DEBUG] SESSION (Complaints):', SESSION ? {role:SESSION.role, site:SESSION.site, hasToken:!!SESSION.token, tokenLen:SESSION.token?SESSION.token.length:0} : 'NULL');
-  google.script.run
+  gscript('getComplaints', SESSION.token, siteFilter||'')
     .withSuccessHandler(function(res) {
       console.log('[DRGL-DEBUG] getComplaints res:', JSON.stringify(res ? {ok:res.ok, error:res.error, count:res.data?res.data.length:'nodata'} : null));
       var html = '<div class="ledger-toolbar">';
@@ -2995,7 +3073,7 @@ function renderComplaints(siteFilter) {
       document.getElementById('page-content').innerHTML = html;
     })
     .withFailureHandler(function(e){ document.getElementById('page-content').innerHTML='<div class="empty">'+esc(e.message)+'</div>'; })
-    .getComplaints(SESSION.token, siteFilter||'');
+    .call();
 }
 
 function viewComplaint(r) {
@@ -3046,7 +3124,7 @@ function submitComplaint() {
   };
   if (!data.subject.trim()) { showToast('Subject is required', true); return; }
   closeModal();
-  google.script.run
+  gscript('addComplaint', SESSION.token, data)
     .withSuccessHandler(function(res){
       if (res&&res.ok) {
         showToast('Complaint submitted \u2713');
@@ -3059,18 +3137,18 @@ function submitComplaint() {
       else showToast((res&&res.error)||'Failed', true);
     })
     .withFailureHandler(function(e){ showToast(e.message, true); })
-    .addComplaint(SESSION.token, data);
+    .call();
 }
 
 function resolveComplaint(id) {
   if (!confirm('Mark this complaint as resolved?')) return;
-  google.script.run
+  gscript('updateComplaintStatus', SESSION.token, id, 'resolved')
     .withSuccessHandler(function(res){
       if (res&&res.ok) { showToast('Resolved \u2713'); renderComplaints(); }
       else showToast((res&&res.error)||'Failed', true);
     })
     .withFailureHandler(function(e){ showToast(e.message, true); })
-    .updateComplaintStatus(SESSION.token, id, 'resolved');
+    .call();
 }
 
 // \u2500\u2500 FINANCE \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
@@ -3079,7 +3157,7 @@ function renderFinance(siteFilter) {
   var isAdmin = canAdmin();
   var canFinApprove = canApproveFinance();
   console.log('[DRGL-DEBUG] SESSION (Finance):', SESSION ? {role:SESSION.role, site:SESSION.site, hasToken:!!SESSION.token, tokenLen:SESSION.token?SESSION.token.length:0} : 'NULL');
-  google.script.run
+  gscript('getFinance', SESSION.token, siteFilter||'')
     .withSuccessHandler(function(res) {
       console.log('[DRGL-DEBUG] getFinance res:', JSON.stringify(res ? {ok:res.ok, error:res.error, count:res.data?res.data.length:'nodata'} : null));
       var html = '<div class="ledger-toolbar">';
@@ -3164,7 +3242,7 @@ function renderFinance(siteFilter) {
       document.getElementById('page-content').innerHTML = html;
     })
     .withFailureHandler(function(e){ document.getElementById('page-content').innerHTML='<div class="empty">'+esc(e.message)+'</div>'; })
-    .getFinance(SESSION.token, siteFilter||'');
+    .call();
 }
 
 function viewFinance(r) {
@@ -3233,7 +3311,7 @@ function submitFinance() {
   });
   if (evidenceFiles.length) data.evidenceFiles = evidenceFiles;
   closeModal();
-  google.script.run
+  gscript('addFinance', SESSION.token, data)
     .withSuccessHandler(function(res){
       if (res&&res.ok) {
         showToast('Request submitted ✓');
@@ -3246,7 +3324,7 @@ function submitFinance() {
       else showToast((res&&res.error)||'Failed', true);
     })
     .withFailureHandler(function(e){ showToast(e.message, true); })
-    .addFinance(SESSION.token, data);
+    .call();
 }
 
 function approveFinance(id, status) {
@@ -3261,26 +3339,26 @@ function approveFinance(id, status) {
       '</div>');
     return;
   }
-  google.script.run
+  gscript('updateFinanceStatus', SESSION.token, id, 'approved', '')
     .withSuccessHandler(function(res){
       if (res&&res.ok) { showToast('Approved ✓'); renderFinance(); }
       else showToast((res&&res.error)||'Failed', true);
     })
     .withFailureHandler(function(e){ showToast(e.message, true); })
-    .updateFinanceStatus(SESSION.token, id, 'approved', '');
+    .call();
 }
 
 function _confirmFinanceReject(id) {
   var reason = ((document.getElementById('fin-reject-reason')||{}).value||'').trim();
   if (!reason) { showToast('Please enter a rejection reason', true); return; }
   closeModal();
-  google.script.run
+  gscript('updateFinanceStatus', SESSION.token, id, 'rejected', reason)
     .withSuccessHandler(function(res){
       if (res&&res.ok) { showToast('Rejected'); renderFinance(); }
       else showToast((res&&res.error)||'Failed', true);
     })
     .withFailureHandler(function(e){ showToast(e.message, true); })
-    .updateFinanceStatus(SESSION.token, id, 'rejected', reason);
+    .call();
 }
 
 // \u2500\u2500 SITES \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
@@ -3351,7 +3429,7 @@ function renderSiteLogsPanel(siteId, siteObj) {
     '\u003Cdiv id="site-logs-content">'+loading()+'\u003C/div>';
   document.getElementById('page-content').innerHTML = html;
 
-  google.script.run
+  gscript('getReports', SESSION.token, siteId)
     .withSuccessHandler(function(res){
       var el = document.getElementById('site-logs-content');
       if (!el) return;
@@ -3382,7 +3460,7 @@ function renderSiteLogsPanel(siteId, siteObj) {
       var el = document.getElementById('site-logs-content');
       if (el) el.innerHTML = '\u003Cdiv class="empty">'+esc(e.message)+'\u003C/div>';
     })
-    .getReports(SESSION.token, siteId);
+    .call();
 }
 
 function renderSiteAssignments(siteId, siteObj) {
@@ -3397,7 +3475,7 @@ function renderSiteAssignments(siteId, siteObj) {
     '\u003Cdiv id="site-asg-content">'+loading()+'\u003C/div>';
   document.getElementById('page-content').innerHTML = html;
 
-  google.script.run
+  gscript('getSiteMembers', SESSION.token, siteId)
     .withSuccessHandler(function(mr){
       var el = document.getElementById('site-members-panel');
       if (!el) return;
@@ -3405,9 +3483,9 @@ function renderSiteAssignments(siteId, siteObj) {
       el.innerHTML = renderSiteMembersPanel(mr.data, siteId, isAdmin);
     })
     .withFailureHandler(function(){ var el = document.getElementById('site-members-panel'); if(el) el.innerHTML=''; })
-    .getSiteMembers(SESSION.token, siteId);
+    .call();
 
-  google.script.run
+  gscript('getSiteAssignments', SESSION.token, siteId)
     .withSuccessHandler(function(ar){
       var el = document.getElementById('site-asg-content');
       if (!el) return;
@@ -3426,7 +3504,7 @@ function renderSiteAssignments(siteId, siteObj) {
       el.innerHTML = out;
     })
     .withFailureHandler(function(e){ var el=document.getElementById('site-asg-content'); if(el) el.innerHTML='\u003Cdiv class="empty">'+esc(e.message)+'\u003C/div>'; })
-    .getSiteAssignments(SESSION.token, siteId);
+    .call();
 }
 
 function renderSiteMembersPanel(data, siteId, isAdmin) {
@@ -3475,18 +3553,18 @@ function renderSiteMembersPanel(data, siteId, isAdmin) {
 }
 
 function promoteSiteLead(siteId, username) {
-  google.script.run
+  gscript('setSiteLead', SESSION.token, siteId, username)
     .withSuccessHandler(function(res){
       if (res && res.ok) { showToast('Site Lead updated \u2713'); renderSiteAssignments(siteId, getSiteObj(siteId)); }
       else showToast((res&&res.error)||'Failed', true);
     })
     .withFailureHandler(function(e){ showToast(e.message, true); })
-    .setSiteLead(SESSION.token, siteId, username);
+    .call();
 }
 
 function openNewSiteAssignmentForm(siteId) {
   var siteObj = getSiteObj(siteId);
-  google.script.run
+  gscript('getSiteMembers', SESSION.token, siteId)
     .withSuccessHandler(function(mr){
       var members = (mr && mr.ok && mr.data && mr.data.members) ? mr.data.members : [];
       var memberOpts = '<option value="">-- Unassigned --</option>' +
@@ -3526,7 +3604,7 @@ function openNewSiteAssignmentForm(siteId) {
       );
     })
     .withFailureHandler(function(){ showToast('Could not load site members', true); })
-    .getSiteMembers(SESSION.token, siteId);
+    .call();
 }
 
 function submitSiteAssignment(siteId) {
@@ -3548,7 +3626,7 @@ function submitSiteAssignment(siteId) {
     support2:    document.getElementById('sa-s2').value
   };
   closeModal();
-  google.script.run
+  gscript('addSiteAssignment', SESSION.token, data)
     .withSuccessHandler(function(res){
       if (res && res.ok) {
         showToast('Assignment created \u2713');
@@ -3563,7 +3641,7 @@ function submitSiteAssignment(siteId) {
       else showToast((res&&res.error)||'Failed', true);
     })
     .withFailureHandler(function(e){ showToast(e.message, true); })
-    .addSiteAssignment(SESSION.token, data);
+    .call();
 }
 
 function openAddSiteForm() {
@@ -3595,7 +3673,7 @@ function submitNewSite() {
   var minerals = document.getElementById('ns-minerals').value.trim();
   if (!name)  { showToast('Site name is required', true); return; }
   if (!state) { showToast('Select a state', true); return; }
-  google.script.run
+  gscript('addSite', SESSION.token, { name: name, state: state, minerals: minerals })
     .withSuccessHandler(function(res){
       if (!res || !res.ok) { showToast((res&&res.error)||'Failed', true); return; }
       showToast(name + ' added \u2713');
@@ -3605,12 +3683,12 @@ function submitNewSite() {
       renderSite();
     })
     .withFailureHandler(function(e){ showToast(e.message, true); })
-    .addSite(SESSION.token, { name: name, state: state, minerals: minerals });
+    .call();
 }
 
 function removeSite(id, name) {
   if (!confirm('Remove site "'+name+'"?\n\nExisting reports and entries for this site will be kept.')) return;
-  google.script.run
+  gscript('deleteSite', SESSION.token, id)
     .withSuccessHandler(function(res){
       if (!res || !res.ok) { showToast((res&&res.error)||'Failed', true); return; }
       showToast(name + ' removed');
@@ -3619,7 +3697,7 @@ function removeSite(id, name) {
       renderSite();
     })
     .withFailureHandler(function(e){ showToast(e.message, true); })
-    .deleteSite(SESSION.token, id);
+    .call();
 }
 
 // \u2500\u2500 PERMISSIONS MANAGER \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
@@ -3658,7 +3736,7 @@ function renderPermissionsManager() {
   var pc = document.getElementById('page-content');
   pc.innerHTML = '\u003Cdiv style="text-align:center;padding:30px">\u003Cdiv class="spin" style="margin:0 auto">\u003C/div>\u003C/div>';
 
-  google.script.run
+  gscript('getUsers', SESSION.token)
     .withSuccessHandler(function(res) {
       var users = (res && res.ok) ? (res.data || []) : [];
       users = users.filter(function(u){ return u.role !== 'superadmin'; });
@@ -3788,7 +3866,7 @@ function renderPermissionsManager() {
     .withFailureHandler(function(e){
       document.getElementById('page-content').innerHTML = '\u003Cdiv class="empty">\u003Cdiv class="ei">\u26A0\uFE0F\u003C/div>'+esc(String(e.message||e))+'\u003C/div>';
     })
-    .getUsers(SESSION.token);
+    .call();
 }
 
 function togglePermPanel(id) {
@@ -3826,7 +3904,7 @@ function savePermissions(username) {
   if (btn) { btn.disabled = true; btn.textContent = '\u23F3 Saving\u2026'; }
   var perms = collectPermissions(username);
 
-  google.script.run
+  gscript('saveUserPermissions', SESSION.token, username, JSON.stringify(perms))
     .withSuccessHandler(function(res) {
       if (btn) { btn.disabled = false; btn.style.background = ''; btn.textContent = '\uD83D\uDCBE Save Permissions'; }
       if (res && res.ok) {
@@ -3840,18 +3918,18 @@ function savePermissions(username) {
       if (btn) { btn.disabled = false; btn.textContent = '\uD83D\uDCBE Save Permissions'; }
       if (status) { status.style.color = '#c62828'; status.textContent = String(e.message||e); }
     })
-    .saveUserPermissions(SESSION.token, username, JSON.stringify(perms));
+    .call();
 }
 
 function resetPermissions(username) {
   if (!confirm('Reset permissions for ' + username + ' to defaults (own dept/site only)?')) return;
-  google.script.run
+  gscript('saveUserPermissions', SESSION.token, username, '')
     .withSuccessHandler(function(res){
       if (res && res.ok) { showToast('\u21BA Permissions reset for ' + username); renderPermissionsManager(); }
       else showToast('Error resetting permissions');
     })
     .withFailureHandler(function(e){ showToast('Error: ' + String(e.message||e)); })
-    .saveUserPermissions(SESSION.token, username, '');
+    .call();
 }
 
 // \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550
@@ -3917,7 +3995,7 @@ var LDG_ACT_FG = { ADD:'#2e7d32',UPDATE:'#e65100',DELETE:'#c62828',UPLOAD:'#0277
   APPROVE:'#558b2f',REJECT:'#b71c1c',NOTE:'#6a1b9a',LOGIN:'#1a237e',LOGOUT:'#616161' };
 
 function loadLedgerStats() {
-  google.script.run
+  gscript('getLedgerSummary', SESSION.token)
     .withSuccessHandler(function(res) {
       var el = document.getElementById('ldg-stats');
       if (!el || !res || !res.ok) return;
@@ -3937,7 +4015,7 @@ function loadLedgerStats() {
       }).join('');
     })
     .withFailureHandler(function(){})
-    .getLedgerSummary(SESSION.token);
+    .call();
 }
 
 function loadLedger() {
@@ -3952,7 +4030,7 @@ function loadLedger() {
     to:     (document.getElementById('ldg-to')||{}).value||'',
     limit:  parseInt((document.getElementById('ldg-lim')||{}).value||'500',10)
   };
-  google.script.run
+  gscript('getActivityLedger', SESSION.token, filters)
     .withSuccessHandler(function(res) {
       var el2 = document.getElementById('ldg-table');
       if (!el2) return;
@@ -3994,11 +4072,11 @@ function loadLedger() {
       var el3 = document.getElementById('ldg-table');
       if (el3) el3.innerHTML = '\u003Cdiv class="empty">'+esc(String(e.message||e))+'\u003C/div>';
     })
-    .getActivityLedger(SESSION.token, filters);
+    .call();
 }
 
 function exportLedgerCSV() {
-  google.script.run
+  gscript('getActivityLedger', SESSION.token, {limit:2000})
     .withSuccessHandler(function(res) {
       if (!res||!res.ok||!res.data||!res.data.length) { showToast('No data to export'); return; }
       var hdrs = ['timestamp','action','module','actorName','recordId','recordTitle','detail','site','dept'];
@@ -4013,7 +4091,7 @@ function exportLedgerCSV() {
       a.click();
     })
     .withFailureHandler(function(e){ showToast('Export failed: '+String(e.message||e)); })
-    .getActivityLedger(SESSION.token, {limit:2000});
+    .call();
 }
 
 // \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550
@@ -4083,8 +4161,8 @@ function onVaultCatChange() {
 }
 
 function loadVaultSummary() {
-  google.script.run
-    .withSuccessHandler(function(res) {
+  gscript('getVaultSummary', SESSION.token)
+      .withSuccessHandler(function(res) {
       var el = document.getElementById('vault-summary');
       if (!el||!res||!res.ok) return;
       var cards = [{icon:'\uD83D\uDDC4\uFE0F',label:'Total Records',val:res.total||0,color:'#1a237e'}];
@@ -4099,8 +4177,8 @@ function loadVaultSummary() {
           '\u003Cdiv style="font-size:10px;color:#888;font-weight:600">'+c.label+'\u003C/div>\u003C/div>';
       }).join('');
     })
-    .withFailureHandler(function(){})
-    .getVaultSummary(SESSION.token);
+      .withFailureHandler(function(){})
+      .call();
 }
 
 function loadVault() {
@@ -4114,8 +4192,8 @@ function loadVault() {
     linkedModule: (document.getElementById('vlt-mod')||{}).value||'',
     limit: 200
   };
-  google.script.run
-    .withSuccessHandler(function(res) {
+  gscript('getVaultRecords', SESSION.token, filters)
+      .withSuccessHandler(function(res) {
       var el2 = document.getElementById('vlt-grid');
       if (!el2) return;
       if (!res||!res.ok) { el2.innerHTML = '\u003Cdiv class="empty">Failed to load vault\u003C/div>'; return; }
@@ -4155,11 +4233,11 @@ function loadVault() {
       html += '\u003C/div>';
       el2.innerHTML = html;
     })
-    .withFailureHandler(function(e){
+      .withFailureHandler(function(e){
       var el3 = document.getElementById('vlt-grid');
       if (el3) el3.innerHTML = '\u003Cdiv class="empty">'+esc(String(e.message||e))+'\u003C/div>';
     })
-    .getVaultRecords(SESSION.token, filters);
+      .call();
 }
 
 function openVaultForm(prefill) {
@@ -4235,29 +4313,29 @@ function submitVaultRecord(existingId) {
     linkedModule:'manual'
   };
   if (existingId) {
-    google.script.run
+    gscript('updateVaultRecord', SESSION.token, existingId, data)
       .withSuccessHandler(function(res){
         closeModal();
         if (res&&res.ok) { showToast('\u2705 Record updated'); loadVault(); loadVaultSummary(); }
         else showToast('Error: '+((res&&res.error)||'unknown'));
       })
       .withFailureHandler(function(e){ showToast('Error: '+String(e.message||e)); })
-      .updateVaultRecord(SESSION.token, existingId, data);
+      .call();
   } else {
-    google.script.run
+    gscript('addVaultRecord', SESSION.token, data)
       .withSuccessHandler(function(res){
         closeModal();
         if (res&&res.ok) { showToast('\u2705 Added to vault'); loadVault(); loadVaultSummary(); }
         else showToast('Error: '+((res&&res.error)||'unknown'));
       })
       .withFailureHandler(function(e){ showToast('Error: '+String(e.message||e)); })
-      .addVaultRecord(SESSION.token, data);
+      .call();
   }
 }
 
 function loadAndEditVault(id) {
-  google.script.run
-    .withSuccessHandler(function(res){
+  gscript('getVaultRecords', SESSION.token, { search: id, limit: 10 })
+      .withSuccessHandler(function(res){
       if (!res||!res.ok||!res.data||!res.data.length) { showToast('Record not found'); return; }
       // find the record matching the id
       var r = null;
@@ -4266,8 +4344,8 @@ function loadAndEditVault(id) {
       r.id = id;
       openVaultForm(r);
     })
-    .withFailureHandler(function(e){ showToast('Error: '+String(e.message||e)); })
-    .getVaultRecords(SESSION.token, { search: id, limit: 10 });
+      .withFailureHandler(function(e){ showToast('Error: '+String(e.message||e)); })
+      .call();
 }
 
 
@@ -4280,7 +4358,7 @@ function toast(msg, type) {
 function api(action, params) {
   return new Promise(function(resolve, reject) {
     var p = params || {};
-    google.script.run
+    gscript('callLabAction', SESSION ? SESSION.token : '', action, p)
       .withSuccessHandler(function(res) {
         if (res && res.ok === false) { reject(new Error(res.error || 'Server error')); }
         else { resolve((res && typeof res.data !== 'undefined') ? res.data : res); }
@@ -4288,7 +4366,7 @@ function api(action, params) {
       .withFailureHandler(function(e) {
         reject(new Error(e && e.message ? e.message : String(e)));
       })
-      .callLabAction(SESSION ? SESSION.token : '', action, p);
+      .call();
   });
 }
 
@@ -5757,8 +5835,7 @@ const LABREP = (function () {
 
 // \u2500\u2500 USERS \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
 function renderUsers() {
-  google.script.run
-    .withSuccessHandler(function(res) {
+  gscript('getUsers', SESSION.token).withSuccessHandler(function(res) {
       var html = '\u003Cdiv style="display:flex;justify-content:flex-end;margin-bottom:14px">' +
         '\u003Cbutton class="btn btn-primary" onclick="openUserForm()">+ Add User\u003C/button>\u003C/div>' +
         '\u003Cdiv class="card">\u003Cdiv class="card-title">Staff Accounts\u003C/div>';
@@ -5800,7 +5877,7 @@ function renderUsers() {
       document.getElementById('page-content').innerHTML = html;
     })
     .withFailureHandler(function(e){ document.getElementById('page-content').innerHTML='\u003Cdiv class="empty">'+esc(e.message)+'\u003C/div>'; })
-    .getUsers(SESSION.token);
+    .call();
 }
 
 function deptOptions(selected) {
@@ -5958,13 +6035,13 @@ function submitUser() {
   if (!data.username) { showToast('Username is required', true); return; }
   if (!data.password) { showToast('Password is required', true); return; }
   closeModal();
-  google.script.run
+  gscript('addUser', SESSION.token, data)
     .withSuccessHandler(function(res){
       if (res&&res.ok) { showToast('Account created \u2713'); renderUsers(); }
       else showToast((res&&res.error)||'Failed', true);
     })
     .withFailureHandler(function(e){ showToast(e.message, true); })
-    .addUser(SESSION.token, data);
+    .call();
 }
 
 function submitEditUser(username) {
@@ -5984,24 +6061,24 @@ function submitEditUser(username) {
   var newPwd = document.getElementById('eu-pass').value.trim();
   if (newPwd) changes.password = newPwd;
   closeModal();
-  google.script.run
+  gscript('updateUser', SESSION.token, username, changes)
     .withSuccessHandler(function(res){
       if (res&&res.ok) { showToast('Saved \u2713'); renderUsers(); }
       else showToast((res&&res.error)||'Failed', true);
     })
     .withFailureHandler(function(e){ showToast(e.message, true); })
-    .updateUser(SESSION.token, username, changes);
+    .call();
 }
 
 function deleteUserUI(username) {
   if (!confirm('Delete user "'+username+'"? This cannot be undone.')) return;
-  google.script.run
+  gscript('deleteUser', SESSION.token, username)
     .withSuccessHandler(function(res){
       if (res&&res.ok) { showToast('Account deleted'); renderUsers(); }
       else showToast((res&&res.error)||'Failed', true);
     })
     .withFailureHandler(function(e){ showToast(e.message, true); })
-    .deleteUser(SESSION.token, username);
+    .call();
 }
 
 // \u2500\u2500 DEPARTMENTS \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
@@ -7896,7 +7973,7 @@ function importLabLogbookXL(dept) {
         }
         var idx2 = done + errs;
         var rec = records[idx2];
-        google.script.run
+        gscript('addFieldRecord', SESSION.token, dept, rec)
           .withSuccessHandler(function(res) {
             done++;
             if (statusEl) statusEl.textContent = '⏳ ' + done + '/' + total + ' uploaded…';
@@ -7907,7 +7984,7 @@ function importLabLogbookXL(dept) {
             if (statusEl) statusEl.textContent = '⚠️ Error on row ' + (idx2+2) + ': ' + (err && err.message ? err.message : err);
             submitNext();
           })
-          .addFieldRecord(SESSION.token, dept, rec);
+          .call();
       }
       submitNext();
 
@@ -8017,7 +8094,7 @@ function submitLabRecord(dept) {
       tags:       ['lab', dept.toLowerCase(), recType.toLowerCase().replace(/\s+/g,'-')].join(',')
     };
 
-    google.script.run
+    gscript('addFieldRecord', SESSION.token, rec)
       .withSuccessHandler(function(res) {
         if (res && res.ok) {
           showToast('\u2705 Lab record saved!');
@@ -8041,7 +8118,7 @@ function submitLabRecord(dept) {
         showToast('Error: ' + e.message);
         if (btn) { btn.disabled = false; btn.textContent = '\uD83D\uDCE4 Save Lab Record'; }
       })
-      .addFieldRecord(SESSION.token, rec);
+      .call();
   });
 }
 
@@ -8052,7 +8129,7 @@ function loadLabRecords(dept) {
   if (!cont) return;
   cont.innerHTML = '\u003Cdiv style="color:#bbb;font-size:11px;text-align:center;padding:16px">\u003Cdiv class="spin" style="margin:0 auto 8px">\u003C/div>Loading\u2026\u003C/div>';
 
-  google.script.run
+  gscript('getFieldRecords', SESSION.token, dept, siteF)
     .withSuccessHandler(function(res) {
       var cont2 = document.getElementById('lab-records-list-'+dept);
       if (!cont2) return;
@@ -8093,14 +8170,14 @@ function loadLabRecords(dept) {
       var cont2 = document.getElementById('lab-records-list-'+dept);
       if (cont2) cont2.innerHTML = '\u003Cdiv style="color:#c62828;padding:12px;font-size:12px">'+esc(e.message)+'\u003C/div>';
     })
-    .getFieldRecords(SESSION.token, dept, siteF);
+    .call();
 }
 
 // \u2500\u2500 END LAB PREPARATION TAB \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
 
 function loadFieldRecords(dept) {
   var siteF = (document.getElementById('fr-site-filter-'+dept)||{}).value || '';
-  google.script.run
+  gscript('getFieldRecords', SESSION.token, dept, siteF)
     .withSuccessHandler(function(res){
       var typeF = (document.getElementById('fr-type-filter-'+dept)||{}).value || '';
       var records = (res && res.ok) ? (res.data||[]) : [];
@@ -8113,7 +8190,7 @@ function loadFieldRecords(dept) {
       var c = document.getElementById('fr-list-'+dept);
       if (c) c.innerHTML = '\u003Cdiv class="empty">Error: '+esc(e.message)+'\u003C/div>';
     })
-    .getFieldRecords(SESSION.token, dept, siteF);
+    .call();
 }
 
 function renderFieldRecordList(dept, records) {
@@ -8246,7 +8323,7 @@ function renderDeptReports(dept) {
   pc.innerHTML = deptTabBar(dept, 'reports') +
     '\u003Cdiv id="dept-reports-area">' + loading('Loading reports\u2026') + '\u003C/div>';
 
-  google.script.run
+  gscript('getUploads', SESSION.token, 'report', '', dept, '')
     .withSuccessHandler(function(res) {
       var area = document.getElementById('dept-reports-area');
       if (!area) return;
@@ -8290,7 +8367,7 @@ function renderDeptReports(dept) {
       var area = document.getElementById('dept-reports-area');
       if (area) area.innerHTML = '\u003Cdiv class="empty">Failed to load reports\u003C/div>';
     })
-    .getUploads(SESSION.token, 'report', '', dept, '');
+    .call();
 }
 
 function fileIcon(mimeType, fileName) {
@@ -8421,7 +8498,7 @@ function executeReportUpload(dept) {
     var reader = new FileReader();
     reader.onload = function(e) {
       var b64 = e.target.result; // includes data-URL prefix \u2014 backend strips it
-      google.script.run
+      gscript('uploadFileToDrive', SESSION.token, f.name, f.type || 'application/octet-stream', b64, { context: 'report', contextId: '', dept: dept, site: SESSION.site || '' })
         .withSuccessHandler(function(res) {
           results[idx].status = res && res.ok ? 'ok' : 'error';
           results[idx].msg    = res && !res.ok ? (res.error || 'Failed') : '';
@@ -8434,8 +8511,8 @@ function executeReportUpload(dept) {
           updateList();
           uploadOne(idx + 1);
         })
-        .uploadFileToDrive(SESSION.token, f.name, f.type || 'application/octet-stream', b64,
-          { context: 'report', contextId: '', dept: dept, site: SESSION.site || '' });
+        .call();
+
     };
     reader.onerror = function() {
       results[idx].status = 'error'; results[idx].msg = 'Could not read file';
@@ -8452,13 +8529,13 @@ function executeReportUpload(dept) {
  */
 function deleteUploadUI(dept, id) {
   if (!confirm('Remove this file from the list? The Drive file itself is not deleted.')) return;
-  google.script.run
+  gscript('deleteUpload', SESSION.token, id)
     .withSuccessHandler(function(res) {
       if (res && res.ok) { showToast('Removed \u2713'); renderDeptReports(dept); }
       else showToast((res && res.error) || 'Failed', true);
     })
     .withFailureHandler(function(e) { showToast(e.message, true); })
-    .deleteUpload(SESSION.token, id);
+    .call();
 }
 
 // \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
@@ -8588,14 +8665,14 @@ function uploadWidgetFiles(inputId, context, contextId, dept, site, callback) {
     var f = files[idx];
     var reader = new FileReader();
     reader.onload = function(e) {
-      google.script.run
+      gscript('uploadFileToDrive', SESSION.token, f.name, f.type || 'application/octet-stream', e.target.result, { context: context, contextId: contextId, dept: dept, site: site })
         .withSuccessHandler(function(res) {
           if (res && res.ok) urls.push(res.viewUrl);
           doOne(idx + 1);
         })
         .withFailureHandler(function() { doOne(idx + 1); })
-        .uploadFileToDrive(SESSION.token, f.name, f.type || 'application/octet-stream', e.target.result,
-          { context: context, contextId: contextId, dept: dept, site: site });
+        .call();
+
     };
     reader.onerror = function() { doOne(idx + 1); };
     reader.readAsDataURL(f);
@@ -8708,7 +8785,7 @@ function saveFieldRecord(dept, recordType) {
       tags:        (document.getElementById('fr-tags')||{}).value || ''
     };
     closeModal();
-    google.script.run
+    gscript('addFieldRecord', SESSION.token, data)
       .withSuccessHandler(function(res){
         if (res && res.ok) {
           showToast('Field record saved \u2713' + (uploadedUrls.length ? ' (' + uploadedUrls.length + ' file' + (uploadedUrls.length>1?'s':'')+' attached)' : ''));
@@ -8724,19 +8801,19 @@ function saveFieldRecord(dept, recordType) {
         else showToast('Error: '+(res&&res.error||'Unknown'));
       })
       .withFailureHandler(function(e){ showToast('Error: '+e.message); })
-      .addFieldRecord(SESSION.token, data);
+      .call();
   });
 }
 
 function deleteFieldRecord(dept, id) {
   if (!confirm('Delete this field record? This cannot be undone.')) return;
-  google.script.run
+  gscript('deleteFieldRecord', SESSION.token, id)
     .withSuccessHandler(function(res){
       if (res && res.ok) { showToast('Record deleted'); loadFieldRecords(dept); }
       else showToast('Error: '+(res&&res.error||'Unknown'));
     })
     .withFailureHandler(function(e){ showToast('Error: '+e.message); })
-    .deleteFieldRecord(SESSION.token, id);
+    .call();
 }
 
 // \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550
@@ -8752,7 +8829,7 @@ function renderProjects(projectId) {
   if (projectId) { renderProjectDetail(projectId); return; }
   var pc = document.getElementById('page-content');
   pc.innerHTML = loading('Loading projects\u2026');
-  google.script.run
+  gscript('getProjects', SESSION.token, '', '')
     .withSuccessHandler(function(res) {
       if (!res || !res.ok) { pc.innerHTML = '\u003Cdiv class="empty">Error loading projects\u003C/div>'; return; }
       var rows = res.data || [];
@@ -8805,7 +8882,7 @@ function renderProjects(projectId) {
       pc.innerHTML = html;
     })
     .withFailureHandler(function(e){ pc.innerHTML = '\u003Cdiv class="empty">'+esc(e.message)+'\u003C/div>'; })
-    .getProjects(SESSION.token, '', '');
+    .call();
 }
 
 function projectCard(p, isAdmin) {
@@ -8850,7 +8927,7 @@ function projectCard(p, isAdmin) {
 function renderProjectDetail(projectId) {
   var pc = document.getElementById('page-content');
   pc.innerHTML = loading('Loading project\u2026');
-  google.script.run
+  gscript('getProjectDetail', SESSION.token, projectId)
     .withSuccessHandler(function(res) {
       if (!res || !res.ok) { pc.innerHTML = '\u003Cdiv class="empty">'+esc(res&&res.error||'Error')+'\u003C/div>'; return; }
       var p    = res.project;
@@ -8971,7 +9048,7 @@ function renderProjectDetail(projectId) {
       pc.innerHTML = html;
     })
     .withFailureHandler(function(e){ pc.innerHTML = '\u003Cdiv class="empty">'+esc(e.message)+'\u003C/div>'; })
-    .getProjectDetail(SESSION.token, projectId);
+    .call();
 }
 
 // \u2500\u2500 Project modals \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
@@ -9009,13 +9086,13 @@ function submitNewProject() {
     description: document.getElementById('np-desc').value.trim()
   };
   closeModal();
-  google.script.run
+  gscript('createProject', SESSION.token, data)
     .withSuccessHandler(function(res){
       if (res && res.ok) { showToast('Project created \u2713'); renderProjects(); }
       else showToast(res&&res.error||'Failed', true);
     })
     .withFailureHandler(function(e){ showToast(e.message, true); })
-    .createProject(SESSION.token, data);
+    .call();
 }
 
 function openEditProjectModal(id, name, status) {
@@ -9039,13 +9116,13 @@ function submitEditProject(id) {
     name:   document.getElementById('ep-name').value.trim()
   };
   closeModal();
-  google.script.run
+  gscript('updateProject', SESSION.token, id, patch)
     .withSuccessHandler(function(res){
       if (res && res.ok) { showToast('Updated \u2713'); renderProjects(); }
       else showToast(res&&res.error||'Failed', true);
     })
     .withFailureHandler(function(e){ showToast(e.message, true); })
-    .updateProject(SESSION.token, id, patch);
+    .call();
 }
 
 // \u2500\u2500 PROJECT CLOSE-OUT FLOW \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
@@ -9108,7 +9185,7 @@ function submitCloseOut(id, name) {
     closedBy:     closedBy,
     closedDate:   new Date().toISOString().slice(0,10)
   };
-  google.script.run
+  gscript('updateProject', SESSION.token, id, patch)
     .withSuccessHandler(function(res){
       if (res && res.ok) {
         showToast('\uD83D\uDCE6 "'+name+'" archived \u2014 closure recorded');
@@ -9116,18 +9193,18 @@ function submitCloseOut(id, name) {
       } else showToast(res&&res.error||'Failed', true);
     })
     .withFailureHandler(function(e){ showToast(e.message, true); })
-    .updateProject(SESSION.token, id, patch);
+    .call();
 }
 
 function deleteProjectUI(id) {
   if (!confirm('Archive this project? Its logs will be kept.')) return;
-  google.script.run
+  gscript('deleteProject', SESSION.token, id)
     .withSuccessHandler(function(res){
       if (res && res.ok) { showToast('Archived \u2713'); renderProjects(); }
       else showToast(res&&res.error||'Failed', true);
     })
     .withFailureHandler(function(e){ showToast(e.message, true); })
-    .deleteProject(SESSION.token, id);
+    .call();
 }
 
 function toggleArchivedProjects() {
@@ -9172,13 +9249,13 @@ function archivedProjectCard(p, isAdmin) {
 
 function reopenProject(id, name) {
   if (!confirm('Reopen "'+name+'" and set it back to Active?')) return;
-  google.script.run
+  gscript('updateProject', SESSION.token, id, { status:'active', closureStage:'', closureReason:'', closedBy:'', closedDate:'' })
     .withSuccessHandler(function(res){
       if (res && res.ok) { showToast('\u2705 "'+name+'" is now Active again'); renderProjects(); }
       else showToast(res&&res.error||'Failed', true);
     })
     .withFailureHandler(function(e){ showToast(e.message, true); })
-    .updateProject(SESSION.token, id, { status:'active', closureStage:'', closureReason:'', closedBy:'', closedDate:'' });
+    .call();
 }
 
 // \u2500\u2500 Cross-dept task modal \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
@@ -9212,7 +9289,7 @@ function submitCrossDeptTask(projectId, projectName, fromDept) {
     priority:    document.getElementById('cdt-pri').value
   };
   closeModal();
-  google.script.run
+  gscript('createCrossDeptTask', SESSION.token, data)
     .withSuccessHandler(function(res){
       if (res && res.ok) {
         showToast('Notification sent to '+toDept+' \u2713');
@@ -9220,17 +9297,17 @@ function submitCrossDeptTask(projectId, projectName, fromDept) {
       } else showToast(res&&res.error||'Failed', true);
     })
     .withFailureHandler(function(e){ showToast(e.message, true); })
-    .createCrossDeptTask(SESSION.token, data);
+    .call();
 }
 
 function resolveCDTaskUI(taskId, projectId) {
-  google.script.run
+  gscript('resolveCrossDeptTask', SESSION.token, taskId)
     .withSuccessHandler(function(res){
       if (res && res.ok) { showToast('Task marked done \u2713'); renderProjectDetail(projectId); }
       else showToast(res&&res.error||'Failed', true);
     })
     .withFailureHandler(function(e){ showToast(e.message, true); })
-    .resolveCrossDeptTask(SESSION.token, taskId);
+    .call();
 }
 
 // \u2500\u2500 Cross-dept tasks badge in dept dashboard \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
@@ -9240,7 +9317,7 @@ function resolveCDTaskUI(taskId, projectId) {
  * dismissible notice at the top of the dept page.
  */
 function renderCrossDeptTasksBanner(dept, container) {
-  google.script.run
+  gscript('getCrossDeptTasks', SESSION.token, dept, '', 'open')
     .withSuccessHandler(function(res) {
       if (!res || !res.ok || !res.data || !res.data.length) return;
       var tasks = res.data.filter(function(t){ return t.status === 'open'; });
@@ -9266,17 +9343,17 @@ function renderCrossDeptTasksBanner(dept, container) {
       el.insertAdjacentHTML('afterbegin', html);
     })
     .withFailureHandler(function(){})
-    .getCrossDeptTasks(SESSION.token, dept, '', 'open');
+    .call();
 }
 
 function resolveCDTaskFromDept(taskId, dept) {
-  google.script.run
+  gscript('resolveCrossDeptTask', SESSION.token, taskId)
     .withSuccessHandler(function(res){
       if (res && res.ok) { showToast('Marked done \u2713'); renderDept(dept); }
       else showToast(res&&res.error||'Failed', true);
     })
     .withFailureHandler(function(e){ showToast(e.message, true); })
-    .resolveCrossDeptTask(SESSION.token, taskId);
+    .call();
 }
 
 // \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550
@@ -9572,7 +9649,7 @@ function submitUniversalForm(deptKey, deptLabel) {
       tags:       [deptKey, recType.toLowerCase().replace(/\s+/g,'-')].join(',')
     };
 
-    google.script.run
+    gscript('addFieldRecord', SESSION.token, rec)
       .withSuccessHandler(function(res) {
         if (res && res.ok) {
           showToast('\u2705 '+deptLabel+' record submitted!');
@@ -9594,7 +9671,7 @@ function submitUniversalForm(deptKey, deptLabel) {
         showToast('Error: '+e.message);
         if(btn){btn.disabled=false;btn.textContent='\uD83D\uDCE4 Submit '+deptLabel+' Record';}
       })
-      .addFieldRecord(SESSION.token, rec);
+      .call();
   });
 }
 
@@ -9616,7 +9693,7 @@ function renderFieldStaffLedger(deptKey, containerId) {
   var deptMeta2 = FE_DEPTS.filter(function(d){ return d.key === deptKey; })[0] || { label: deptKey, icon:'\uD83D\uDCCB' };
   var deptName = deptMeta2.label;
   el.innerHTML = '\u003Cdiv style="text-align:center;color:#bbb;padding:20px;font-size:12px">\u003Cdiv class="spin" style="margin:0 auto 8px">\u003C/div>Loading your records\u2026\u003C/div>';
-  google.script.run
+  gscript('getFieldSubmissions', SESSION.token, deptKey, '', '', '', '')
     .withSuccessHandler(function(res) {
       var el2 = document.getElementById(containerId);
       if (!el2) return;
@@ -9853,7 +9930,7 @@ function renderFieldStaffLedger(deptKey, containerId) {
       var el2 = document.getElementById(containerId);
       if (el2) el2.innerHTML = '\u003Cdiv style="color:#c62828;padding:12px;font-size:12px">'+esc(e.message)+'\u003C/div>';
     })
-    .getFieldSubmissions(SESSION.token, deptKey, '', '', '', '');
+    .call();
 }
 
 // \u2500\u2500 FieldData ledger for non-pipeline departments \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
@@ -9864,7 +9941,7 @@ function renderFieldDataLedger(deptKey, containerId) {
   var deptMeta = FE_DEPTS.filter(function(d){ return d.key === deptKey; })[0] || { label: deptKey, icon:'\uD83D\uDCCB' };
   el.innerHTML = '\u003Cdiv style="text-align:center;color:#bbb;padding:20px;font-size:12px">\u003Cdiv class="spin" style="margin:0 auto 8px">\u003C/div>Loading your records\u2026\u003C/div>';
 
-  google.script.run
+  gscript('getFieldRecords', SESSION.token, deptKey, '')
     .withSuccessHandler(function(res) {
       var el2 = document.getElementById(containerId);
       if (!el2) return;
@@ -9965,11 +10042,11 @@ function renderFieldDataLedger(deptKey, containerId) {
       var el2 = document.getElementById(containerId);
       if (el2) el2.innerHTML = '\u003Cdiv style="color:#c62828;padding:12px;font-size:12px">'+esc(e.message)+'\u003C/div>';
     })
-    .getFieldRecords(SESSION.token, deptKey, '');
+    .call();
 }
 
 function loadPendingRequestsPanel(containerId, dept, site) {
-  google.script.run
+  gscript('getDataRequests', SESSION.token, dept, site, 'open')
     .withSuccessHandler(function(res) {
       var el = document.getElementById(containerId);
       if (!el || !res || !res.ok) return;
@@ -9994,7 +10071,7 @@ function loadPendingRequestsPanel(containerId, dept, site) {
       el.innerHTML = html;
     })
     .withFailureHandler(function(){})
-    .getDataRequests(SESSION.token, dept, site, 'open');
+    .call();
 }
 
 function captureGPS(latId, lonId, btnId) {
@@ -10037,13 +10114,13 @@ function feProjectSiteHtml() {
 
 function ensureProjectsCache(cb) {
   if (window.PROJECTS_CACHE) { if(cb) cb(); return; }
-  google.script.run
+  gscript('getProjects', SESSION.token, '', 'active')
     .withSuccessHandler(function(res){
       window.PROJECTS_CACHE = (res && res.ok) ? (res.data||[]) : [];
       if(cb) cb();
     })
     .withFailureHandler(function(){ window.PROJECTS_CACHE = []; if(cb) cb(); })
-    .getProjects(SESSION.token, '', 'active');
+    .call();
 }
 
 function todayStr() {
@@ -10144,7 +10221,7 @@ function submitGeoForm() {
       if(btn){btn.disabled=false;btn.textContent='\uD83D\uDCE4 Submit Field Record';}
       return;
     }
-    google.script.run
+    gscript('submitFieldObservation', SESSION.token, data)
       .withSuccessHandler(function(res) {
         if (res && res.ok) {
           showToast('\u2705 Geology record submitted!');
@@ -10169,7 +10246,7 @@ function submitGeoForm() {
         showToast('Error: '+e.message);
         if(btn){btn.disabled=false;btn.textContent='\uD83D\uDCE4 Submit Field Record';}
       })
-      .submitFieldObservation(SESSION.token, data);
+      .call();
   });
 }
 
@@ -10252,7 +10329,7 @@ function submitGphyForm() {
       if(btn){btn.disabled=false;btn.textContent='\uD83D\uDCE4 Submit Geophysics Record';}
       return;
     }
-    google.script.run
+    gscript('submitFieldGeophysics', SESSION.token, data)
       .withSuccessHandler(function(res) {
         if (res && res.ok) {
           showToast('\u2705 Geophysics record submitted!');
@@ -10271,7 +10348,7 @@ function submitGphyForm() {
         else { showToast('Error: '+(res?res.error:'Unknown')); if(btn){btn.disabled=false;btn.textContent='\uD83D\uDCE4 Submit Geophysics Record';} }
       })
       .withFailureHandler(function(e){ showToast('Error: '+e.message); if(btn){btn.disabled=false;btn.textContent='\uD83D\uDCE4 Submit Geophysics Record';} })
-      .submitFieldGeophysics(SESSION.token, data);
+      .call();
   });
 }
 
@@ -10345,7 +10422,7 @@ function submitGchemForm() {
       if(btn){btn.disabled=false;btn.textContent='\uD83D\uDCE4 Submit Geochemistry Record';}
       return;
     }
-    google.script.run
+    gscript('submitFieldGeochem', SESSION.token, data)
       .withSuccessHandler(function(res) {
         if (res && res.ok) {
           showToast('\u2705 Geochemistry record submitted!');
@@ -10366,7 +10443,7 @@ function submitGchemForm() {
         else { showToast('Error: '+(res?res.error:'Unknown')); if(btn){btn.disabled=false;btn.textContent='\uD83D\uDCE4 Submit Geochemistry Record';} }
       })
       .withFailureHandler(function(e){ showToast('Error: '+e.message); if(btn){btn.disabled=false;btn.textContent='\uD83D\uDCE4 Submit Geochemistry Record';} })
-      .submitFieldGeochem(SESSION.token, data);
+      .call();
   });
 }
 
@@ -10453,7 +10530,7 @@ function submitDrillForm() {
       if(btn){btn.disabled=false;btn.textContent='\uD83D\uDCE4 Submit Drilling Record';}
       return;
     }
-    google.script.run
+    gscript('submitFieldDrilling', SESSION.token, data)
       .withSuccessHandler(function(res) {
         if (res && res.ok) {
           showToast('\u2705 Drilling record submitted!');
@@ -10474,7 +10551,7 @@ function submitDrillForm() {
         else { showToast('Error: '+(res?res.error:'Unknown')); if(btn){btn.disabled=false;btn.textContent='\uD83D\uDCE4 Submit Drilling Record';} }
       })
       .withFailureHandler(function(e){ showToast('Error: '+e.message); if(btn){btn.disabled=false;btn.textContent='\uD83D\uDCE4 Submit Drilling Record';} })
-      .submitFieldDrilling(SESSION.token, data);
+      .call();
   });
 }
 
@@ -10482,7 +10559,8 @@ function tryFulfillPendingRequest(recordId) {
   try {
     var els = document.querySelectorAll('.pending-req-id');
     if (els.length === 1 && els[0].value) {
-      google.script.run.fulfillDataRequest(SESSION.token, els[0].value, recordId);
+      gscript('fulfillDataRequest', SESSION.token, els[0].value, recordId
+      .call();
     }
   } catch(_) {}
 }
@@ -10873,10 +10951,10 @@ function _autoSyncFieldRecordToDept(deptKey, formData) {
 
   // Fire all creates silently \u2014 no toast, no nav change
   toCreate.forEach(function(rec) {
-    google.script.run
+    gscript('addFieldRecord', SESSION.token, rec)
       .withSuccessHandler(function(){})
       .withFailureHandler(function(){})
-      .addFieldRecord(SESSION.token, rec);
+      .call();
     // Auto-vault each pipeline record
     _autoVault('fielddata','geodata',rec.dept||'',
       (rec.dept||'Field').toUpperCase()+' Auto Record \u2013 '+(rec.date||rec.traverse||''),
@@ -10943,7 +11021,7 @@ function renderFieldDataViewer(deptName, containerId, projectId, _silent) {
     }, 60000);  // refresh every 60 s
   }
 
-  google.script.run
+  gscript('getFieldSubmissions', SESSION.token, deptKey, projectId||'', '', '', '')
     .withSuccessHandler(function(res) {
       var el2 = document.getElementById(containerId);
       if (!el2) {
@@ -11204,21 +11282,21 @@ function renderFieldDataViewer(deptName, containerId, projectId, _silent) {
       var el2 = document.getElementById(containerId);
       if (el2 && !_silent) el2.innerHTML = '\u003Cdiv style="color:#c62828;padding:12px;font-size:12px">'+esc(e.message)+'\u003C/div>';
     })
-    .getFieldSubmissions(SESSION.token, deptKey, projectId||'', '', '', '');
+    .call();
 }
 
 function setFieldStatus(deptKey, id, status, deptName, containerId, projectId) {
-  google.script.run
+  gscript('updateFieldSubmissionStatus', SESSION.token, deptKey, id, status)
     .withSuccessHandler(function(res) {
       if (res && res.ok) { showToast('Status updated to '+status); renderFieldDataViewer(deptName, containerId, projectId); }
       else showToast('Error: '+(res?res.error:'Unknown'));
     })
     .withFailureHandler(function(e){ showToast('Error: '+e.message); })
-    .updateFieldSubmissionStatus(SESSION.token, deptKey, id, status);
+    .call();
 }
 
 function downloadFieldDataCsv(deptKey, projectId) {
-  google.script.run
+  gscript('getFieldSubmissions', SESSION.token, deptKey, projectId||'', '', '', '')
     .withSuccessHandler(function(res) {
       if (!res || !res.ok || !res.data || !res.data.length) { showToast('No data to download'); return; }
       var rows = res.data;
@@ -11234,7 +11312,7 @@ function downloadFieldDataCsv(deptKey, projectId) {
       a.click();
     })
     .withFailureHandler(function(e){ showToast('Download error: '+e.message); })
-    .getFieldSubmissions(SESSION.token, deptKey, projectId||'', '', '', '');
+    .call();
 }
 
 // \u2500\u2500 C. DATA REQUEST MODAL \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
@@ -11279,13 +11357,13 @@ function openDataRequestModal(dept) {
         };
         if (!data.title) { showToast('Title is required'); return; }
         closeModal();
-        google.script.run
+        gscript('createDataRequest', SESSION.token, data)
           .withSuccessHandler(function(res){
             if (res && res.ok) showToast('\u2705 Data request sent to field');
             else showToast('Error: '+(res?res.error:'Unknown'));
           })
           .withFailureHandler(function(e){ showToast('Error: '+e.message); })
-          .createDataRequest(SESSION.token, data);
+          .call();
       }},
       { label:'Cancel', onclick: closeModal }]
     );
@@ -11334,13 +11412,13 @@ function openOutputUploadModal(projectId, projectName, dept) {
           fileName:     '',
           isFinalReport:(document.getElementById('out-final')||{}).checked
         };
-        google.script.run
+        gscript('submitProcessedOutput', SESSION.token, data)
           .withSuccessHandler(function(res){
             if (res && res.ok) showToast('\u2705 Output uploaded'+(data.isFinalReport?' as Final Report':''));
             else showToast('Error: '+(res?res.error:'Unknown'));
           })
           .withFailureHandler(function(e){ showToast('Error: '+e.message); })
-          .submitProcessedOutput(SESSION.token, data);
+          .call();
       });
     }},
     { label:'Cancel', onclick: closeModal }]
@@ -11353,7 +11431,7 @@ function renderProjectArchive(projectId, projectName) {
   var pc = document.getElementById('page-content');
   if (!pc) return;
   pc.innerHTML = loading();
-  google.script.run
+  gscript('getProjectArchive', SESSION.token, projectId)
     .withSuccessHandler(function(res) {
       if (!res || !res.ok) { pc.innerHTML='\u003Cdiv class="empty">'+esc(res?res.error:'Error')+'\u003C/div>'; return; }
       var fd = res.fieldData || {};
@@ -11479,7 +11557,7 @@ function renderProjectArchive(projectId, projectName) {
       pc.innerHTML = html;
     })
     .withFailureHandler(function(e){ if(pc) pc.innerHTML='\u003Cdiv class="empty">'+esc(e.message)+'\u003C/div>'; })
-    .getProjectArchive(SESSION.token, projectId);
+    .call();
 }
 
 function switchArchiveTab(tab) {
@@ -11493,13 +11571,13 @@ function switchArchiveTab(tab) {
 
 function cancelReqFromArchive(reqId, projectId, projectName) {
   if (!confirm('Cancel this data request?')) return;
-  google.script.run
+  gscript('cancelDataRequest', SESSION.token, reqId)
     .withSuccessHandler(function(res){
       if(res&&res.ok){ showToast('Request cancelled'); renderProjectArchive(projectId, projectName); }
       else showToast('Error: '+(res?res.error:'Unknown'));
     })
     .withFailureHandler(function(e){ showToast('Error: '+e.message); })
-    .cancelDataRequest(SESSION.token, reqId);
+    .call();
 }
 
 // \u2500\u2500 ORGANOGRAM page \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
@@ -11516,7 +11594,7 @@ function renderOrganogram() {
   _ORG.deletedUsernames = [];
   _orgLoadStatic(); // restore previously saved static names
 
-  google.script.run
+  gscript('getUsers', SESSION.token)
     .withSuccessHandler(function(res) {
       if (!res || !res.ok) {
         pc.innerHTML = '<div class="empty">Error loading organogram</div>';
@@ -11529,7 +11607,7 @@ function renderOrganogram() {
       document.getElementById('page-content').innerHTML =
         '<div class="empty">'+esc((err&&err.message)||'Error')+'</div>';
     })
-    .getUsers(SESSION.token);
+    .call();
 }
 
 function _orgRender() {
@@ -11939,14 +12017,14 @@ function _orgSave() {
       if (done === ops.length) _orgSaveDone(errors);
     };
     if (op.type === 'add') {
-      google.script.run.withSuccessHandler(onDone).withFailureHandler(onFail)
-        .addUser(SESSION.token, op.data);
+      gscript('addUser', SESSION.token, op.data).withSuccessHandler(onDone).withFailureHandler(onFail)
+        .call();
     } else if (op.type === 'update') {
-      google.script.run.withSuccessHandler(onDone).withFailureHandler(onFail)
-        .updateUser(SESSION.token, op.username, op.data);
+      gscript('updateUser', SESSION.token, op.username, op.data).withSuccessHandler(onDone).withFailureHandler(onFail)
+        .call();
     } else if (op.type === 'delete') {
-      google.script.run.withSuccessHandler(onDone).withFailureHandler(onFail)
-        .deleteUser(SESSION.token, op.username);
+      gscript('deleteUser', SESSION.token, op.username).withSuccessHandler(onDone).withFailureHandler(onFail)
+        .call();
     }
   });
 }
@@ -11956,7 +12034,7 @@ function _orgSaveDone(errors) {
   // Reload from DB so everything is in sync
   var pc = document.getElementById('page-content');
   pc.innerHTML = '<div class="empty"><div class="spin" style="margin:0 auto 10px"></div>Refreshing…</div>';
-  google.script.run
+  gscript('getUsers', SESSION.token)
     .withSuccessHandler(function(res){
       _ORG.users = (res && res.data) || _ORG.users;
       _orgRender();
@@ -11964,7 +12042,7 @@ function _orgSaveDone(errors) {
       else               _orgToast('✅ All changes saved');
     })
     .withFailureHandler(function(){ _orgRender(); })
-    .getUsers(SESSION.token);
+    .call();
 }
 
 function _orgLoadStatic() {
@@ -12934,8 +13012,7 @@ function renderTrainingMedia(dept) {
         var driveSection = document.querySelector('#driveFileName') ? document.querySelector('#driveFileName').closest('div').parentElement : null;
         if (driveSection) driveSection.appendChild(status);
 
-        if (typeof google !== 'undefined' && google.script && google.script.run) {
-          google.script.run
+        gscript('uploadTrainingMedia', SESSION && SESSION.token, { fileName: file.name, mimeType: file.type || 'application/octet-stream', base64: e.target.result, desc: desc, module: activeModule })
             .withSuccessHandler(function(r) {
               if (r && r.ok) {
                 uploadedFiles.push({
@@ -12947,25 +13024,28 @@ function renderTrainingMedia(dept) {
                 saveUploads(); render();
               } else {
                 status.textContent = '❌ Upload failed: ' + ((r && r.error) || 'unknown error');
+                // Fallback: store locally
+                uploadedFiles.push({
+                  module: activeModule, name: file.name, desc: desc,
+                  size: (file.size/1024).toFixed(0)+' KB',
+                  date: new Date().toLocaleDateString(),
+                  dataUrl: e.target.result, driveUrl: ''
+                });
+                saveUploads(); render();
               }
             })
             .withFailureHandler(function(err) {
               status.textContent = '❌ ' + String(err);
+              // Fallback: store locally
+              uploadedFiles.push({
+                module: activeModule, name: file.name, desc: desc,
+                size: (file.size/1024).toFixed(0)+' KB',
+                date: new Date().toLocaleDateString(),
+                dataUrl: e.target.result, driveUrl: ''
+              });
+              saveUploads(); render();
             })
-            .uploadTrainingMedia(
-              SESSION && SESSION.token,
-              { fileName: file.name, mimeType: file.type, base64: b64, desc: desc, module: activeModule }
-            );
-        } else {
-          // Fallback: store locally
-          uploadedFiles.push({
-            module: activeModule, name: file.name, desc: desc,
-            size: (file.size/1024).toFixed(0)+' KB',
-            date: new Date().toLocaleDateString(),
-            dataUrl: e.target.result, driveUrl: ''
-          });
-          saveUploads(); render();
-        }
+            .call();
       };
       reader.readAsDataURL(file);
     };
@@ -13275,7 +13355,7 @@ function renderDeptProjectList(dept, siteFilter) {
     '\u003C/div>' +
     '\u003Cdiv id="proj-list-area">\u003Cdiv class="empty">\u003Cdiv class="ei">\u23F3\u003C/div>Loading projects\u2026\u003C/div>\u003C/div>';
 
-  google.script.run
+  gscript('getDeptProjects', SESSION.token, dept)
     .withSuccessHandler(function(res){
       var html = '';
       var projects = (res && res.ok) ? (res.data || []) : [];
@@ -13341,7 +13421,7 @@ function renderDeptProjectList(dept, siteFilter) {
     .withFailureHandler(function(e){
       var _pla = document.getElementById('proj-list-area'); if (_pla) _pla.innerHTML = '\u003Cdiv class="empty">'+esc(e.message)+'\u003C/div>';
     })
-    .getDeptProjects(SESSION.token, dept);
+    .call();
 }
 
 // Project detail: stage-by-stage log view for one project
@@ -13361,7 +13441,7 @@ function renderDeptProjectDetail(dept, project, siteFilter) {
     '\u003C/div>' +
     '\u003Cdiv id="proj-detail-area">\u003Cdiv class="empty">\u003Cdiv class="ei">\u23F3\u003C/div>Loading\u2026\u003C/div>\u003C/div>';
 
-  google.script.run
+  gscript('getDeptLogs', SESSION.token, dept, '')
     .withSuccessHandler(function(res){
       var allLogs = (res && res.ok) ? (res.data || []).filter(function(r){ return r.project === project; }) : [];
       var html = '';
@@ -13448,7 +13528,7 @@ function renderDeptProjectDetail(dept, project, siteFilter) {
     .withFailureHandler(function(e){
       var _pda = document.getElementById('proj-detail-area'); if (_pda) _pda.innerHTML = '\u003Cdiv class="empty">'+esc(e.message)+'\u003C/div>';
     })
-    .getDeptLogs(SESSION.token, dept, '');
+    .call();
 }
 
 // Flat log list (fallback / "all logs" view)
@@ -13488,7 +13568,7 @@ function renderDeptLogsAll(dept) {
     '\u003C/div>' +
     '\u003Cdiv id="all-logs-area">\u003Cdiv class="empty">\u003Cdiv class="ei">\u23F3\u003C/div>Loading\u2026\u003C/div>\u003C/div>';
 
-  google.script.run
+  gscript('getDeptLogs', SESSION.token, dept, '')
     .withSuccessHandler(function(res){
       var rows = (res && res.ok) ? (res.data || []) : [];
       var inProg = rows.filter(function(r){ return r.status === 'in-progress'; }).length;
@@ -13504,7 +13584,7 @@ function renderDeptLogsAll(dept) {
     .withFailureHandler(function(e){
       var _ala = document.getElementById('all-logs-area'); if (_ala) _ala.innerHTML = '\u003Cdiv class="empty">'+esc(e.message)+'\u003C/div>';
     })
-    .getDeptLogs(SESSION.token, dept, '');
+    .call();
 }
 
 function openDeptProject(dept, project) {
@@ -13528,12 +13608,12 @@ function renderDeptAssignments(dept) {
     '\u003Cdiv id="asg-content">\u003Cdiv class="empty">\u003Cdiv class="ei">\u23F3\u003C/div>Loading assignments\u2026\u003C/div>\u003C/div>';
 
   // Load members panel and assignments in parallel
-  google.script.run
+  gscript('getDeptMembers', SESSION.token, dept)
     .withSuccessHandler(function(mr){ renderMembersPanel(mr, dept, isAdmin); })
     .withFailureHandler(function(){ })
-    .getDeptMembers(SESSION.token, dept);
+    .call();
 
-  google.script.run
+  gscript('getAssignments', SESSION.token, dept)
     .withSuccessHandler(function(res){
       var el = document.getElementById('asg-content');
       if (!el) return;
@@ -13568,7 +13648,7 @@ function renderDeptAssignments(dept) {
       el.innerHTML = html;
     })
     .withFailureHandler(function(e){ var el=document.getElementById('asg-content'); if(el) el.innerHTML='\u003Cdiv class="empty">'+esc(e.message)+'\u003C/div>'; })
-    .getAssignments(SESSION.token, dept);
+    .call();
 }
 
 function renderMembersPanel(mr, dept, isAdmin) {
@@ -13612,18 +13692,18 @@ function renderMembersPanel(mr, dept, isAdmin) {
 }
 
 function setLeadUI(dept, username) {
-  google.script.run
+  gscript('setDeptLead', SESSION.token, dept, username)
     .withSuccessHandler(function(res){
       if (res && res.ok) { showToast('Team Lead updated \u2713'); renderDeptAssignments(dept); }
       else showToast((res&&res.error)||'Failed', true);
     })
     .withFailureHandler(function(e){ showToast(e.message, true); })
-    .setDeptLead(SESSION.token, dept, username);
+    .call();
 }
 
 function openManageDeptMembers(dept) {
   // Show all users with a dept selector; let admin change a user's department
-  google.script.run
+  gscript('getUsers', SESSION.token)
     .withSuccessHandler(function(res){
       var users = (res && res.data) || [];
       var inDept = users.filter(function(u){ return u.department === dept; });
@@ -13654,7 +13734,7 @@ function openManageDeptMembers(dept) {
         '\u003Cdiv class="modal-foot">\u003Cbutton class="btn btn-ghost" onclick="closeModal()">Done\u003C/button>\u003C/div>');
     })
     .withFailureHandler(function(e){ showToast(e.message, true); })
-    .getUsers(SESSION.token);
+    .call();
 }
 
 function addMemberToDept(dept) {
@@ -13665,7 +13745,7 @@ function addMemberToDept(dept) {
 }
 
 function changeMemberDept(username, newDept, refreshDept) {
-  google.script.run
+  gscript('updateUser', SESSION.token, username, { department: newDept })
     .withSuccessHandler(function(res){
       if (!res || !res.ok) { showToast((res&&res.error)||'Failed', true); return; }
       showToast(username + (newDept ? ' added to '+newDept : ' removed from department') + ' \u2713');
@@ -13673,7 +13753,7 @@ function changeMemberDept(username, newDept, refreshDept) {
       renderDeptAssignments(refreshDept);
     })
     .withFailureHandler(function(e){ showToast(e.message, true); })
-    .updateUser(SESSION.token, username, { department: newDept });
+    .call();
 }
 
 function asgCard(r, isAdmin) {
@@ -13758,7 +13838,7 @@ function toggleThread(assignmentId, dept) {
 function loadThreadMessages(assignmentId) {
   var box = document.getElementById('msgs-'+assignmentId);
   if (!box) return;
-  google.script.run
+  gscript('getAssignmentComments', SESSION.token, assignmentId)
     .withSuccessHandler(function(res){
       if (!box) return;
       var msgs = (res && res.data) || [];
@@ -13781,7 +13861,7 @@ function loadThreadMessages(assignmentId) {
     .withFailureHandler(function(){
       if (box) box.innerHTML = '\u003Cdiv style="font-size:12px;color:#e53935;padding:8px">Failed to load messages\u003C/div>';
     })
-    .getAssignmentComments(SESSION.token, assignmentId);
+    .call();
 }
 
 function submitComment(assignmentId, dept) {
@@ -13789,7 +13869,7 @@ function submitComment(assignmentId, dept) {
   var msg = ta ? ta.value.trim() : '';
   if (!msg) { showToast('Please type a message', true); return; }
   ta.disabled = true;
-  google.script.run
+  gscript('addAssignmentComment', SESSION.token, assignmentId, msg)
     .withSuccessHandler(function(res){
       if (ta) { ta.disabled = false; ta.value = ''; }
       if (!res || !res.ok) { showToast((res&&res.error)||'Failed', true); return; }
@@ -13799,18 +13879,18 @@ function submitComment(assignmentId, dept) {
       if (ta) ta.disabled = false;
       showToast(e.message, true);
     })
-    .addAssignmentComment(SESSION.token, assignmentId, msg);
+    .call();
 }
 
 function deleteCommentUI(commentId, assignmentId) {
   if (!confirm('Delete this comment?')) return;
-  google.script.run
+  gscript('deleteAssignmentComment', SESSION.token, commentId)
     .withSuccessHandler(function(res){
       if (res && res.ok) { loadThreadMessages(assignmentId); showToast('Comment deleted'); }
       else showToast((res&&res.error)||'Failed', true);
     })
     .withFailureHandler(function(e){ showToast(e.message, true); })
-    .deleteAssignmentComment(SESSION.token, commentId);
+    .call();
 }
 
 // \u2500\u2500 NEW ASSIGNMENT FORM \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
@@ -13822,7 +13902,7 @@ function deptUserOptions(dept) {
 
 function openNewAssignmentForm(dept) {
   // We need department members. Fetch all users and filter by department.
-  google.script.run
+  gscript('getUsers', SESSION.token)
     .withSuccessHandler(function(res){
       var users = ((res && res.data) || []).filter(function(u){ return u.department === dept; });
       var opts = '<option value="">-- Unassigned --</option>' +
@@ -13873,7 +13953,7 @@ function openNewAssignmentForm(dept) {
         '\u003Cdiv class="modal-foot">\u003Cbutton class="btn btn-ghost" onclick="closeModal()">Cancel\u003C/button>' +
         '\u003Cbutton class="btn btn-primary" onclick="submitNewAssignment(\''+esc(dept)+'\')">Create Assignment\u003C/button>\u003C/div>');
     })
-    .getUsers(SESSION.token);
+    .call();
 }
 
 // Helper: build a <select> from the RESPONSIBILITIES list
@@ -13903,7 +13983,7 @@ function submitNewAssignment(dept) {
   if (!data.title) { showToast('Title is required', true); return; }
   if (!m1) { showToast('At least one Major Responsibility is required', true); return; }
   closeModal();
-  google.script.run
+  gscript('addAssignment', SESSION.token, data)
     .withSuccessHandler(function(res){
       if (res && res.ok) {
         showToast('Assignment created \u2713');
@@ -13917,7 +13997,7 @@ function submitNewAssignment(dept) {
       else showToast((res&&res.error)||'Failed', true);
     })
     .withFailureHandler(function(e){ showToast(e.message, true); })
-    .addAssignment(SESSION.token, data);
+    .call();
 }
 
 // \u2500\u2500 UPDATE PROGRESS MODAL \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
@@ -13939,24 +14019,24 @@ function submitProgressUpdate(id) {
   var pct    = document.getElementById('up-pct').value;
   var status = document.getElementById('up-status').value;
   closeModal();
-  google.script.run
+  gscript('updateAssignmentProgress', SESSION.token, id, pct, status)
     .withSuccessHandler(function(res){
       if (res && res.ok) { showToast('Progress updated \u2713'); renderDept(CURRENT_SUB); }
       else showToast((res&&res.error)||'Failed', true);
     })
     .withFailureHandler(function(e){ showToast(e.message, true); })
-    .updateAssignmentProgress(SESSION.token, id, pct, status);
+    .call();
 }
 
 function deleteAssignmentUI(id, dept) {
   if (!confirm('Delete this assignment and all its comments?')) return;
-  google.script.run
+  gscript('deleteAssignment', SESSION.token, id)
     .withSuccessHandler(function(res){
       if (res && res.ok) { showToast('Assignment deleted'); renderDeptAssignments(dept); }
       else showToast((res&&res.error)||'Failed', true);
     })
     .withFailureHandler(function(e){ showToast(e.message, true); })
-    .deleteAssignment(SESSION.token, id);
+    .call();
 }
 
 function openManageDepts() {
@@ -13990,12 +14070,12 @@ function submitNewDept() {
   var icon = document.getElementById('nd-icon').value.trim() || '\uD83C\uDFE2';
   var desc = document.getElementById('nd-desc').value.trim();
   if (!name) { showToast('Department name required', true); return; }
-  google.script.run
+  gscript('addDepartment', SESSION.token, { name: name, icon: icon, description: desc })
     .withSuccessHandler(function(res){
       if (!res || !res.ok) { showToast((res&&res.error)||'Failed', true); return; }
       showToast(name + ' added \u2713');
       // Reload dept list from server so nav is fully in sync
-      google.script.run
+      gscript('getDepartments', SESSION.token)
         .withSuccessHandler(function(dr){
           if (dr && dr.ok) DEPTS = dr.data || [];
           renderDeptNav();
@@ -14003,20 +14083,20 @@ function submitNewDept() {
           openManageDepts();
         })
         .withFailureHandler(function(){ renderDeptNav(); closeModal(); openManageDepts(); })
-        .getDepartments(SESSION.token);
+        .call();
     })
     .withFailureHandler(function(e){ showToast(e.message, true); })
-    .addDepartment(SESSION.token, { name: name, icon: icon, description: desc });
+    .call();
 }
 
 function removeDept(id, name) {
   if (!confirm('Remove department "'+name+'"? Existing logs will be kept.')) return;
-  google.script.run
+  gscript('deleteDepartment', SESSION.token, id)
     .withSuccessHandler(function(res){
       if (!res || !res.ok) { showToast((res&&res.error)||'Failed', true); return; }
       showToast(name + ' removed');
       // Reload dept list from server
-      google.script.run
+      gscript('getDepartments', SESSION.token)
         .withSuccessHandler(function(dr){
           if (dr && dr.ok) DEPTS = dr.data || [];
           renderDeptNav();
@@ -14025,10 +14105,10 @@ function removeDept(id, name) {
           else openManageDepts();
         })
         .withFailureHandler(function(){ renderDeptNav(); closeModal(); })
-        .getDepartments(SESSION.token);
+        .call();
     })
     .withFailureHandler(function(e){ showToast(e.message, true); })
-    .deleteDepartment(SESSION.token, id);
+    .call();
 }
 
 // New Project form: creates first log entry for a named project
@@ -14110,7 +14190,7 @@ function submitDeptLog(dept, isNewProject) {
       workflowStage:  stage
     };
     closeModal();
-    google.script.run
+    gscript('addDeptLog', SESSION.token, data)
       .withSuccessHandler(function(res){
         if (res && res.ok) {
           showToast('Log saved \u2713' + (uploadedUrls.length ? ' (' + uploadedUrls.length + ' file' + (uploadedUrls.length>1?'s':'')+' attached)' : ''));
@@ -14125,29 +14205,29 @@ function submitDeptLog(dept, isNewProject) {
         }
       })
       .withFailureHandler(function(e){ showToast(e.message, true); })
-      .addDeptLog(SESSION.token, data);
+      .call();
   });
 }
 
 function closeDeptLog(id) {
-  google.script.run
+  gscript('updateDeptLogStatus', SESSION.token, id, 'completed')
     .withSuccessHandler(function(res){
       if (res&&res.ok) { showToast('Marked completed \u2713'); renderDept(CURRENT_SUB); }
       else showToast((res&&res.error)||'Failed', true);
     })
     .withFailureHandler(function(e){ showToast(e.message, true); })
-    .updateDeptLogStatus(SESSION.token, id, 'completed');
+    .call();
 }
 
 function deleteDeptLogUI(id) {
   if (!confirm('Delete this log entry?')) return;
-  google.script.run
+  gscript('deleteDeptLog', SESSION.token, id)
     .withSuccessHandler(function(res){
       if (res&&res.ok) { showToast('Deleted'); renderDept(CURRENT_SUB); }
       else showToast((res&&res.error)||'Failed', true);
     })
     .withFailureHandler(function(e){ showToast(e.message, true); })
-    .deleteDeptLog(SESSION.token, id);
+    .call();
 }
 
 // \u2500\u2500 BOOT \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
@@ -14166,7 +14246,7 @@ function deleteDeptLogUI(id) {
     var btn = document.getElementById('lbtn');
     if (btn) btn.disabled = true;
 
-    google.script.run
+    gscript('validateSession', saved.token)
       .withSuccessHandler(function(res) {
         console.log('[DRGL] validateSession response:', JSON.stringify(res ? {ok:res.ok, role:res.role, username:res.username} : null));
         if (res && res.ok) {
@@ -14198,7 +14278,7 @@ function deleteDeptLogUI(id) {
         if (spin) spin.classList.remove('show');
         if (btn) btn.disabled = false;
       })
-      .validateSession(saved.token);
+      .call();
   } else {
     console.log('[DRGL] boot: no saved session, showing login screen');
     document.getElementById('login-screen').style.display = 'flex';
@@ -14802,8 +14882,8 @@ function gmSaveManualPoint() {
   GEOMAP_STATE.data.push(rec);
   // Save to backend
   if (SESSION) {
-    google.script.run.withSuccessHandler(function(){}).withFailureHandler(function(){})
-      .saveGeoMapRecord(SESSION.token, rec);
+    gscript('saveGeoMapRecord', SESSION.token, rec).withSuccessHandler(function(){}).withFailureHandler(function(){})
+      .call();
   }
   document.getElementById('gm-entry-modal').style.display = 'none';
   gmUpdateDataTable();
@@ -14885,8 +14965,8 @@ function gmConfirmUpload() {
   GEOMAP_STATE._csvRows = null;
   document.getElementById('gm-upload-modal').style.display = 'none';
   if (SESSION) {
-    google.script.run.withSuccessHandler(function(){}).withFailureHandler(function(){})
-      .saveGeoMapRecordsBulk(SESSION.token, rows);
+    gscript('saveGeoMapRecordsBulk', SESSION.token, rows).withSuccessHandler(function(){}).withFailureHandler(function(){})
+      .call();
   }
   gmUpdateDataTable();
 }
@@ -14958,7 +15038,7 @@ function gmLoadFromSheets() {
     // Show loading indicator in count span
     var ct = document.getElementById('gm-point-count');
     if (ct) ct.textContent = 'Loading…';
-    google.script.run
+    gscript('getFieldDataForGeoMap', SESSION.token, { sources: sources, projectId: projectId || undefined })
       .withSuccessHandler(function(res) {
         if (!res || !res.ok) {
           alert('Could not load field data: ' + (res && res.error || 'unknown error'));
@@ -14971,7 +15051,7 @@ function gmLoadFromSheets() {
       .withFailureHandler(function(e) {
         alert('Failed to load field data: ' + (e && e.message || e));
       })
-      .getFieldDataForGeoMap(SESSION.token, { sources: sources, projectId: projectId || undefined });
+      .call();
   };
 }
 
@@ -15237,7 +15317,7 @@ var SOP_STATE = {
 function renderSopHome() {
   var pc = document.getElementById('page-content');
   pc.innerHTML = loading();
-  google.script.run
+  gscript('getSopProjects', SESSION.token)
     .withSuccessHandler(function(res) {
       if (!res || !res.ok) {
         pc.innerHTML = '<div class="card"><p style="color:var(--danger)">' +
@@ -15252,7 +15332,7 @@ function renderSopHome() {
     .withFailureHandler(function(e) {
       pc.innerHTML = '<div class="card"><p style="color:var(--danger)">Error: ' + esc(e && e.message || 'Server error') + '</p></div>';
     })
-    .getSopProjects(SESSION.token);
+    .call();
 }
 
 function _renderSopProjectList() {
@@ -15336,7 +15416,7 @@ function submitSopNewProject() {
   if (!dept) { showToast('Select a department', true); return; }
   var btn = document.getElementById('sop-create-btn');
   if (btn) { btn.disabled = true; btn.textContent = 'Creating…'; }
-  google.script.run
+  gscript('createSopProject', SESSION.token, { projectName: name, department: dept, departmentLead: lead, startDate: date })
     .withSuccessHandler(function(res) {
       closeModal();
       if (!res || !res.ok) { showToast(res && res.error || 'Could not create project', true); return; }
@@ -15347,7 +15427,7 @@ function submitSopNewProject() {
       closeModal();
       showToast('Error: ' + (e && e.message || 'Server error'), true);
     })
-    .createSopProject(SESSION.token, { projectName: name, department: dept, departmentLead: lead, startDate: date });
+    .call();
 }
 
 function openSopProject(sopProjectId) {
@@ -15363,7 +15443,7 @@ function openSopProject(sopProjectId) {
   var pc = document.getElementById('page-content');
   pc.innerHTML = loading();
 
-  google.script.run
+  gscript('getSopSteps', SESSION.token, sopProjectId)
     .withSuccessHandler(function(res) {
       if (!res || !res.ok) {
         pc.innerHTML = '<div class="card"><p style="color:var(--danger)">' + esc(res && res.error || 'Could not load steps') + '</p></div>';
@@ -15384,7 +15464,7 @@ function openSopProject(sopProjectId) {
     .withFailureHandler(function(e) {
       pc.innerHTML = '<div class="card"><p style="color:var(--danger)">Error: ' + esc(e && e.message || 'Server error') + '</p></div>';
     })
-    .getSopSteps(SESSION.token, sopProjectId);
+    .call();
 }
 
 function _renderSopProjectDetail(proj) {
@@ -15529,7 +15609,7 @@ function saveSopChanges() {
     };
   });
 
-  google.script.run
+  gscript('saveSopStepsBatch', SESSION.token, proj.id, batch)
     .withSuccessHandler(function(res) {
       SOP_STATE.saving = false;
       if (btn) { btn.disabled = false; btn.textContent = '💾 Save Changes'; }
@@ -15542,21 +15622,21 @@ function saveSopChanges() {
       if (btn) { btn.disabled = false; btn.textContent = '💾 Save Changes'; }
       showToast('Error: ' + (e && e.message || 'Server error'), true);
     })
-    .saveSopStepsBatch(SESSION.token, proj.id, batch);
+    .call();
 }
 
 function deleteSopProject(sopProjectId) {
   if (!confirm('Delete this SOP project? This cannot be undone.')) return;
-  google.script.run
+  gscript('deleteSopProject', SESSION.token, sopProjectId)
     .withSuccessHandler(function(res) {
       if (!res || !res.ok) { showToast(res && res.error || 'Delete failed', true); return; }
       showToast('Project deleted');
       renderSopHome();
     })
     .withFailureHandler(function(e) { showToast('Error: ' + (e && e.message || 'Server error'), true); })
-    .deleteSopProject(SESSION.token, sopProjectId);
+    .call();
 }
 // ═══ end SOP WORKFLOWS MODULE ═══
 
 </script>
-</body>
+</body)
