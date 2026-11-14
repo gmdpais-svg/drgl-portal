@@ -10560,7 +10560,7 @@ function tryFulfillPendingRequest(recordId) {
   try {
     var els = document.querySelectorAll('.pending-req-id');
     if (els.length === 1 && els[0].value) {
-      gscript('fulfillDataRequest', SESSION.token, els[0].value, recordId
+      gscript('fulfillDataRequest', SESSION.token, els[0].value, recordId)
       .call();
     }
   } catch(_) {}
