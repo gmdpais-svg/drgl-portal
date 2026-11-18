@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Roy's Portal</title>
+<style>
+  html,body{margin:0;height:100%;font-family:Arial,Helvetica,sans-serif;background:#f4f6fb;color:#1a237e}
+  #ldr{display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;gap:14px;text-align:center;padding:0 16px}
+  #ldr .sp{width:38px;height:38px;border:4px solid #c5cae9;border-top-color:#1a237e;border-radius:50%;animation:r 1s linear infinite}
+  @keyframes r{to{transform:rotate(360deg)}}
+  #ldr .t{font-size:15px;font-weight:700}
+  #ldr .s{font-size:12px;color:#555;max-width:420px}
+  #ldr button{padding:8px 18px;border:0;border-radius:6px;background:#1a237e;color:#fff;font-size:14px;cursor:pointer}
+</style>
+</head>
+<body>
+<div id="ldr"><div class="sp"></div><div class="t">Roy's Portal</div><div class="s" id="ldr-s">Loading the latest version…</div></div>
+<script>
+/*  GitHub Pages loader for Roy's Portal.
+    This file never needs editing: it downloads whichever Index.html is deployed in Apps Script,
+    keeps a copy on the device (so the portal opens instantly and works on a poor connection),
+    and picks up every new Apps Script deployment by itself.
+    Only change SCRIPT_URL if you ever create a brand-new deployment with a different URL.        */
+(function () {
+  var SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbyBgT5sPUFwLf1lnwHPcqLUdpAw3i4xol4jJUEg0GeVnNwtJI-xa1EmtbZqEzC9VUm1/exec';
+  var CACHE = 'roys-portal-app', KEY = 'index.html', VKEY = 'roys-portal-ver';
+  var forceFresh = /[?&]fresh\b/.test(location.search);
+  var msg = function (t) { var e = document.getElementById('ldr-s'); if (e) e.textContent = t; };
+  var timed = function (url, ms) {
+    var ctl = window.AbortController ? new AbortController() : null, tm = setTimeout(function () { if (ctl) ctl.abort(); }, ms);
+    return fetch(url, { cache: 'no-store', redirect: 'follow', signal: ctl ? ctl.signal : undefined })
+      .then(function (r) { clearTimeout(tm); if (!r.ok) throw new Error('HTTP ' + r.status); return r; }, function (e) { clearTimeout(tm); throw e; });
+  };
+  var lsGet = function (k) { try { return localStorage.getItem(k); } catch (e) { return null; } };
+  var lsSet = function (k, v) { try { localStorage.setItem(k, v); } catch (e) {} };
+  var readCopy = function () {
+    if (!window.caches) return Promise.resolve(null);
+    return caches.open(CACHE).then(function (c) { return c.match(KEY); }).then(function (r) { return r ? r.text() : null; }).catch(function () { return null; });
+  };
+  var saveCopy = function (html, ver) {
+    lsSet(VKEY, ver);
+    if (!window.caches) return Promise.resolve();
+    return caches.open(CACHE).then(function (c) { return c.put(KEY, new Response(html, { headers: { 'Content-Type': 'text/html; charset=utf-8' } })); }).catch(function () {});
+  };
+  var getVersion = function () { return timed(SCRIPT_URL + '?raw=ver&t=' + Date.now(), 20000).then(function (r) { return r.json(); }); };
+  var getHtml = function () {
+    return timed(SCRIPT_URL + '?raw=html&t=' + Date.now(), 90000).then(function (r) { return r.text(); }).then(function (h) {
+      if (!/<html|<body|<div/i.test(h) || h.length < 1000) throw new Error('Unexpected reply from Apps Script');
+      return h;
+    });
+  };
+  var started = false;
+  var show = function (html) {
+    if (started) return; started = true;
+    // never write a second portal into a window that already ran one (its scripts would clash): reload instead
+    if (window.__DRGL_SHOWN) { location.reload(); return; } window.__DRGL_SHOWN = 1;
+    document.open(); document.write(html); document.close();
+  };
+  var banner = function (build) {
+    var b = document.createElement('div');
+    b.style.cssText = 'position:fixed;left:50%;bottom:18px;transform:translateX(-50%);z-index:2147483647;background:#1a237e;color:#fff;padding:10px 16px;border-radius:8px;font:13px Arial,sans-serif;box-shadow:0 4px 16px rgba(0,0,0,.3);display:flex;gap:12px;align-items:center';
+    b.innerHTML = '<span>A new version of the portal is ready' + (build ? ' (' + build + ')' : '') + '.</span>';
+    var go = document.createElement('button'); go.textContent = 'Reload now';
+    go.style.cssText = 'background:#fff;color:#1a237e;border:0;border-radius:5px;padding:5px 12px;font-weight:700;cursor:pointer';
+    go.onclick = function () { location.reload(); };
+    var x = document.createElement('button'); x.textContent = 'Later'; x.style.cssText = 'background:transparent;color:#fff;border:1px solid #fff;border-radius:5px;padding:5px 10px;cursor:pointer';
+    x.onclick = function () { b.remove(); };
+    b.appendChild(go); b.appendChild(x); (document.body || document.documentElement).appendChild(b);
+  };
+  var fail = function (e) {
+    msg('Could not reach the portal server (' + (e && e.message || e) + '). Check your connection and try again.');
+    var l = document.getElementById('ldr'); if (l && !l.querySelector('button')) { var b = document.createElement('button'); b.textContent = 'Try again'; b.onclick = function () { location.reload(); }; l.appendChild(b); }
+  };
+
+  readCopy().then(function (copy) {
+    var myVer = lsGet(VKEY);
+    if (copy && !forceFresh) {
+      // Open the saved copy straight away, then check Apps Script for a newer deployment in the background.
+      show(copy);
+      getVersion().then(function (v) {
+        if (!v || !v.ver || v.ver === myVer) return;
+        return getHtml().then(function (h) { return saveCopy(h, v.ver).then(function () { banner(v.build); }); });
+      }).catch(function () { /* offline: keep using the saved copy */ });
+      return;
+    }
+    // First visit on this device (or ?fresh): wait for the deployed version.
+    msg('Downloading the latest portal from Apps Script…');
+    return Promise.all([getVersion().catch(function () { return null; }), getHtml()]).then(function (a) {
+      var v = a[0], h = a[1];
+      return saveCopy(h, v && v.ver || '').then(function () { show(h); });
+    }).catch(function (e) { if (copy) show(copy); else fail(e); });
+  });
+})();
+</script>
+</body>
+</html>
