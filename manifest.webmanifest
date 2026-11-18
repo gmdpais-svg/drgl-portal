@@ -1,0 +1,13 @@
+{
+  "name": "Roy's Portal — Dexter Roy GeoConsult",
+  "short_name": "Roy's Portal",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#0d1b4a",
+  "theme_color": "#1a237e",
+  "icons": [
+    { "src": "icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+  ]
+}

@@ -4,6 +4,10 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Roy's Portal</title>
+<link rel="manifest" href="manifest.webmanifest">
+<meta name="theme-color" content="#1a237e">
+<link rel="apple-touch-icon" href="icon-192.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
 <style>
   html,body{margin:0;height:100%;font-family:Arial,Helvetica,sans-serif;background:#f4f6fb;color:#1a237e}
   #ldr{display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;gap:14px;text-align:center;padding:0 16px}
@@ -26,6 +30,8 @@
   var SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbyBgT5sPUFwLf1lnwHPcqLUdpAw3i4xol4jJUEg0GeVnNwtJI-xa1EmtbZqEzC9VUm1/exec';
   var CACHE = 'roys-portal-app', KEY = 'index.html', VKEY = 'roys-portal-ver';
   var forceFresh = /[?&]fresh\b/.test(location.search);
+  // keep this page itself on the device, so the portal also opens where there is no network
+  try { if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(function () {}); } catch (e) {}
   var msg = function (t) { var e = document.getElementById('ldr-s'); if (e) e.textContent = t; };
   var timed = function (url, ms) {
     var ctl = window.AbortController ? new AbortController() : null, tm = setTimeout(function () { if (ctl) ctl.abort(); }, ms);
@@ -53,6 +59,8 @@
   var started = false;
   var show = function (html) {
     if (started) return; started = true;
+    // never write a second portal into a window that already ran one (its scripts would clash): reload instead
+    if (window.__DRGL_SHOWN) { location.reload(); return; } window.__DRGL_SHOWN = 1;
     document.open(); document.write(html); document.close();
   };
   var banner = function (build) {
@@ -67,7 +75,7 @@
     b.appendChild(go); b.appendChild(x); (document.body || document.documentElement).appendChild(b);
   };
   var fail = function (e) {
-    msg('Could not reach the portal server (' + (e && e.message || e) + '). Check your connection and try again.');
+    msg('Could not reach the portal server (' + (e && e.message || e) + '). The first time on a phone it needs a network; after that it opens offline.');
     var l = document.getElementById('ldr'); if (l && !l.querySelector('button')) { var b = document.createElement('button'); b.textContent = 'Try again'; b.onclick = function () { location.reload(); }; l.appendChild(b); }
   };
 
